@@ -30,5 +30,5 @@ clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, c
 
 ## Libraries to be tested
 
-[ ] https://github.com/tfogal/ptrace/blob/master/ptrace.go
-[ ] https://github.com/hjr265/ptrace.go
+- [ ] https://github.com/tfogal/ptrace/blob/master/ptrace.go
+- [ ] https://github.com/hjr265/ptrace.go
