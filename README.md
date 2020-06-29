@@ -27,3 +27,8 @@ clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, c
 [pid 11338] openat(AT_FDCWD, "/usr/lib/locale/locale-archive", O_RDONLY|O_CLOEXEC) = 3
 
 ```
+
+## Libraries to be tested
+
+[ ] https://github.com/tfogal/ptrace/blob/master/ptrace.go
+[ ] https://github.com/hjr265/ptrace.go
