@@ -32,3 +32,8 @@ clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, c
 
 - [ ] https://github.com/tfogal/ptrace/blob/master/ptrace.go
 - [ ] https://github.com/hjr265/ptrace.go
+
+## Notes
+
+- We've discarded C because Go provides the `syscall` library which provides
+  what we need, while at the same time is easier and safer to use.
