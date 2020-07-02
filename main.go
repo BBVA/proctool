@@ -6,11 +6,11 @@ import (
 	"os"
 	"syscall"
 	"runtime"
-
-	"github.com/hjr265/ptrace.go/ptrace"
 )
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	argv := []string{"./test-minimal"}
 
 	runtime.LockOSThread()
@@ -18,28 +18,50 @@ func main() {
 		Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
 		Sys: &syscall.SysProcAttr{
 			Ptrace:    true,
-			Pdeathsig: syscall.SIGCHLD,
+			//Pdeathsig: syscall.SIGCHLD,
 		},
 	})
-	if err != nil {
-		log.Fatalln(err)
-	}
+	if err != nil { log.Fatalln(err) }
 
 	state, err := proc.Wait()
-	if err != nil {
-		log.Fatalln(err)
-	}
+	if err != nil { log.Fatalln(err) }
+	pgid, err := syscall.Getpgid(proc.Pid)
 
-	tracer, err := ptrace.Attach(proc)
+	// https://medium.com/golangspec/making-debugger-in-golang-part-ii-d2b8eb2f19e0
+	err = syscall.PtraceSetOptions(proc.Pid, syscall.PTRACE_O_TRACECLONE | syscall.PTRACE_O_TRACEFORK | syscall.PTRACE_O_TRACEVFORK)
 
-	fmt.Printf("%+v\n%+v\n%+v\n%+v\n", proc, state, tracer, err)
+	// tracer, err := ptrace.Attach(proc)
+	err = syscall.PtraceAttach(proc.Pid)
+	if err == syscall.EPERM {
+		_, err := syscall.PtraceGetEventMsg(proc.Pid)
+		if err != nil { log.Fatalln(err) }
+	} else if err != nil { log.Fatalln(err) }
 
+	fmt.Printf("%+v\n%+v\n%+v\n", proc, state, err)
+
+
+	err = syscall.PtraceSyscall(proc.Pid, 0)
+	if err != nil { log.Fatalln(err) }
 
 	for {
-		syscall_number, err := tracer.Syscall(0)
-		if err != nil {
-			log.Fatalln(err)
+		status := syscall.WaitStatus(0)
+		pid, err := syscall.Wait4(-1*pgid, &status, syscall.WALL, nil)
+		if err != nil { log.Fatalln(err) }
+
+		if pid == proc.Pid && status.Exited() {
+			fmt.Printf("parent pid %d exited\n", pid)
+			continue
 		}
-		fmt.Printf("syscall_number: %+v\n", syscall_number)
+		if !status.Exited() {
+			regs := &syscall.PtraceRegs{}
+			err = syscall.PtraceGetRegs(pid, regs)
+			if err != nil { log.Fatalln(err) }
+
+			syscall_number := regs.Orig_rax
+
+			fmt.Printf("pid: %d, syscall_number: %+v\n", pid, syscall_number)
+			err = syscall.PtraceSyscall(pid, 0)
+			if err != nil { log.Fatalln("le_err", err) }
+		}
 	}
 }
