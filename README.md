@@ -37,3 +37,7 @@ clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, c
 
 - We've discarded C because Go provides the `syscall` library which provides
   what we need, while at the same time is easier and safer to use.
+- Although we are using Go there are not too many advantages on the portability
+  side due to the low level of programming required in this project. We are
+  dealing with architecture-specific things like registers and offsets to
+  structures.
