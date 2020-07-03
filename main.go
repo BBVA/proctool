@@ -32,7 +32,7 @@ func main() {
 	// tracer, err := ptrace.Attach(proc)
 	err = syscall.PtraceAttach(proc.Pid)
 	if err == syscall.EPERM {
-		_, err := syscall.PtraceGetEventMsg(proc.Pid)
+		_, err = syscall.PtraceGetEventMsg(proc.Pid)
 		if err != nil { log.Fatalln(err) }
 	} else if err != nil { log.Fatalln(err) }
 
