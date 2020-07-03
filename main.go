@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"syscall"
@@ -37,8 +36,9 @@ func main() {
 		if err != nil { log.Fatalln(err) }
 	} else if err != nil { log.Fatalln(err) }
 
-	fmt.Printf("%+v\n%+v\n%+v\n", proc, state, err)
-
+	log.Printf("%+v\n", proc)
+	log.Printf("%+v\n", state)
+	log.Printf("%+v\n", err)
 
 	err = syscall.PtraceSyscall(proc.Pid, 0)
 	if err != nil { log.Fatalln(err) }
@@ -49,7 +49,7 @@ func main() {
 		if err != nil { log.Fatalln(err) }
 
 		if pid == proc.Pid && status.Exited() {
-			fmt.Printf("parent pid %d exited\n", pid)
+			log.Printf("parent pid %d exited\n", pid)
 			continue
 		}
 		if !status.Exited() {
@@ -59,7 +59,7 @@ func main() {
 
 			syscall_number := regs.Orig_rax
 
-			fmt.Printf("pid: %d, syscall_number: %+v\n", pid, syscall_number)
+			log.Printf("pid: %d, syscall_number: %+v\n", pid, syscall_number)
 			err = syscall.PtraceSyscall(pid, 0)
 			if err != nil { log.Fatalln("le_err", err) }
 		}
