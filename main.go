@@ -17,7 +17,6 @@ func main() {
 		Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
 		Sys: &syscall.SysProcAttr{
 			Ptrace:    true,
-			//Pdeathsig: syscall.SIGCHLD,
 		},
 	})
 	if err != nil { log.Fatalln(err) }
@@ -29,12 +28,11 @@ func main() {
 	// https://medium.com/golangspec/making-debugger-in-golang-part-ii-d2b8eb2f19e0
 	err = syscall.PtraceSetOptions(proc.Pid, syscall.PTRACE_O_TRACECLONE | syscall.PTRACE_O_TRACEFORK | syscall.PTRACE_O_TRACEVFORK)
 
-	// tracer, err := ptrace.Attach(proc)
 	err = syscall.PtraceAttach(proc.Pid)
-	if err == syscall.EPERM {
-		_, err = syscall.PtraceGetEventMsg(proc.Pid)
-		if err != nil { log.Fatalln(err) }
-	} else if err != nil { log.Fatalln(err) }
+
+	if err != syscall.EPERM {
+		log.Fatalln(err)
+	}
 
 	log.Printf("%+v\n", proc)
 	log.Printf("%+v\n", state)
