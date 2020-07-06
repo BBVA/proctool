@@ -41,6 +41,8 @@ func main() {
 	err = syscall.PtraceSyscall(proc.Pid, 0)
 	if err != nil { log.Fatalln(err) }
 
+	regs_of := make(map[int]*syscall.PtraceRegs)
+
 	for {
 		status := syscall.WaitStatus(0)
 		pid, err := syscall.Wait4(-1*pgid, &status, syscall.WALL, nil)
@@ -52,12 +54,21 @@ func main() {
 		}
 		if !status.Exited() {
 			regs := &syscall.PtraceRegs{}
-			err = syscall.PtraceGetRegs(pid, regs)
-			if err != nil { log.Fatalln(err) }
-
+			var direction string
+			val, ok := regs_of[pid]
+			if !ok {
+				direction = "user -> kernel"
+				err = syscall.PtraceGetRegs(pid, regs)
+				if err != nil { log.Fatalln(err) }
+				regs_of[pid]=regs
+			} else {
+				direction = "user <- kernel"
+				regs = val
+				delete(regs_of, pid)
+			}
 			syscall_number := regs.Orig_rax
 
-			log.Printf("pid: %d, syscall_number: %+v\n", pid, syscall_number)
+			log.Printf("direction: %s, pid: %d, syscall_number: %+v\n", direction, pid, syscall_number)
 			err = syscall.PtraceSyscall(pid, 0)
 			if err != nil { log.Fatalln("le_err", err) }
 		}
