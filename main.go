@@ -1,10 +1,12 @@
 package main
 
 import (
+	"C"
 	"log"
 	"os"
 	"syscall"
 	"runtime"
+	"unsafe"
 )
 
 func main() {
@@ -65,10 +67,28 @@ func main() {
 				direction = "user <- kernel"
 				regs = val
 				delete(regs_of, pid)
-			}
-			syscall_number := regs.Orig_rax
+				switch syscall_number := regs.Orig_rax; syscall_number {
+				case syscall.SYS_OPENAT:
+					if regs.R10 & syscall.O_RDWR != 0 {
 
-			log.Printf("direction: %s, pid: %d, syscall_number: %+v\n", direction, pid, syscall_number)
+					} else if regs.R10 & syscall.O_WRONLY != 0 {
+
+					} else { // O_RDONLY
+						if int64(regs.Rax) != -1 {
+							// TODO: what happens if child or grandchild is running in a chroot? or docker?
+							// the recovered path might not make sense to the tracer
+							// idea: /proc/pid/fd points to the actual file, no matter what
+							// idea: see if there is a syscall to retrieve this information, check how lsof does it
+
+							// TODO: do a PEEK via PTRACE to do a word-by-word read of what is pointed by regs.Rdi
+
+							// TODO: check line 17.  We have to better understand if this is a hard requisite or not
+							log.Printf("hashea, hashea %q\n", C.GoString((*C.char)(unsafe.Pointer(&regs.Rdi))))
+						}
+					}
+				}
+			}
+			log.Printf("direction: %s, pid: %d, syscall_number: %+v\n", direction, pid, regs.Orig_rax)
 			err = syscall.PtraceSyscall(pid, 0)
 			if err != nil { log.Fatalln("le_err", err) }
 		}
