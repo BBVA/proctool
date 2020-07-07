@@ -2,10 +2,11 @@ package main
 
 import (
     "C"
-    "log"
+    "fmt"
     "os"
-    "syscall"
+    "log"
     "runtime"
+    "syscall"
     //"unsafe"
 )
 
@@ -18,17 +19,21 @@ func main() {
     proc, err := os.StartProcess(argv[0], argv, &os.ProcAttr{
         Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
         Sys: &syscall.SysProcAttr{
-            Ptrace:    true,
+            Ptrace: true,
         },
     })
-    if err != nil { log.Fatalln(err) }
+    if err != nil {
+        log.Fatalln(err)
+    }
 
     state, err := proc.Wait()
-    if err != nil { log.Fatalln(err) }
+    if err != nil {
+        log.Fatalln(err)
+    }
     pgid, err := syscall.Getpgid(proc.Pid)
 
     // https://medium.com/golangspec/making-debugger-in-golang-part-ii-d2b8eb2f19e0
-    err = syscall.PtraceSetOptions(proc.Pid, syscall.PTRACE_O_TRACECLONE | syscall.PTRACE_O_TRACEFORK | syscall.PTRACE_O_TRACEVFORK)
+    err = syscall.PtraceSetOptions(proc.Pid, syscall.PTRACE_O_TRACECLONE|syscall.PTRACE_O_TRACEFORK|syscall.PTRACE_O_TRACEVFORK)
 
     err = syscall.PtraceAttach(proc.Pid)
 
@@ -41,14 +46,18 @@ func main() {
     log.Printf("%+v\n", err)
 
     err = syscall.PtraceSyscall(proc.Pid, 0)
-    if err != nil { log.Fatalln(err) }
+    if err != nil {
+        log.Fatalln(err)
+    }
 
     regs_of := make(map[int]*syscall.PtraceRegs)
 
     for {
         status := syscall.WaitStatus(0)
         pid, err := syscall.Wait4(-1*pgid, &status, syscall.WALL, nil)
-        if err != nil { log.Fatalln(err) }
+        if err != nil {
+            log.Fatalln(err)
+        }
 
         if pid == proc.Pid && status.Exited() {
             log.Printf("parent pid %d exited\n", pid)
@@ -61,17 +70,19 @@ func main() {
             if !ok {
                 direction = "user -> kernel"
                 err = syscall.PtraceGetRegs(pid, regs)
-                if err != nil { log.Fatalln(err) }
-                regs_of[pid]=regs
+                if err != nil {
+                    log.Fatalln(err)
+                }
+                regs_of[pid] = regs
             } else {
                 direction = "user <- kernel"
                 regs = val
                 delete(regs_of, pid)
                 switch syscall_number := regs.Orig_rax; syscall_number {
                 case syscall.SYS_OPENAT:
-                    if regs.R10 & syscall.O_RDWR != 0 {
+                    if regs.R10&syscall.O_RDWR != 0 {
 
-                    } else if regs.R10 & syscall.O_WRONLY != 0 {
+                    } else if regs.R10&syscall.O_WRONLY != 0 {
 
                     } else { // O_RDONLY
                         if int64(regs.Rax) != -1 {
@@ -87,12 +98,10 @@ func main() {
                             log.Printf("hashea, hashea!\n")
                             // TODO: this is going to call ptrace 4096%sizeOfWord times because it won't stop on nulls
                             // we can improve on this by building a function that is aware of the data copied
-                            data := make([]byte, 4096)
-                            bytes_copied, _ := syscall.PtracePeekData(pid, uintptr(regs.Rsi), data)
-                            if bytes_copied == 0  {
-                                log.Fatalln("0-byte string returned")
+                            path, err := read_string(pid, uintptr(regs.Rsi))
+                            if err != nil {
+                                log.Fatalln(err)
                             }
-                            path := C.GoString((*C.char)(C.CBytes(data)))
                             log.Printf("hashea, hashea!: got this word: %q\n", path)
                         }
                     }
@@ -100,7 +109,19 @@ func main() {
             }
             log.Printf("direction: %s, pid: %d, syscall_number: %+v\n", direction, pid, regs.Orig_rax)
             err = syscall.PtraceSyscall(pid, 0)
-            if err != nil { log.Fatalln("le_err", err) }
+            if err != nil {
+                log.Fatalln("le_err", err)
+            }
         }
     }
+}
+
+func read_string(pid int, addr uintptr) (string, error) {
+    data := make([]byte, 4096)
+    bytes_copied, _ := syscall.PtracePeekData(pid, addr, data)
+    if bytes_copied == 0 {
+        return "", fmt.Errorf("0-byte string returned")
+    }
+    str := C.GoString((*C.char)(C.CBytes(data)))
+    return str, nil
 }
