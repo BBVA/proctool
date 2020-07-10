@@ -10,6 +10,8 @@ import (
     "runtime"
     "syscall"
     //"unsafe"
+
+    sec "github.com/seccomp/libseccomp-golang"
 )
 
 func main() {
@@ -129,7 +131,12 @@ func main() {
                     }
                 }
             }
-            log.Printf("direction: %s, pid: %d, syscall_number: %+v\n", direction, pid, regs.Orig_rax)
+            log.Printf(
+                "direction: %s, pid: %d, syscall: %q\n",
+                direction,
+                pid,
+                get_syscall_name(regs.Orig_rax),
+            )
             err = syscall.PtraceSyscall(pid, 0)
             if err != nil {
                 log.Fatalln("le_err", err)
@@ -161,4 +168,9 @@ func hash_file(filename string) (string, error) {
     }
 
     return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+func get_syscall_name(syscall_ID uint64) string {
+	name, _ := sec.ScmpSyscall(syscall_ID).GetName()
+	return name
 }
