@@ -30,7 +30,7 @@ func main() {
         log.Fatalln(err)
     }
 
-    state, err := proc.Wait()
+    _, err = proc.Wait()
     if err != nil {
         log.Fatalln(err)
     }
@@ -48,10 +48,6 @@ func main() {
         log.Fatalln(err)
     }
 
-    log.Printf("%+v\n", proc)
-    log.Printf("%+v\n", state)
-    log.Printf("%+v\n", err)
-
     err = syscall.PtraceSyscall(proc.Pid, 0)
     if err != nil {
         log.Fatalln(err)
@@ -66,35 +62,12 @@ func main() {
             log.Fatalln(err)
         }
 
-        log.Printf("Trap cause: %d\n", wstatus.TrapCause())
-        if wstatus.TrapCause() == syscall.PTRACE_EVENT_EXEC {
-            fmt.Println("POR AQUI!!!")
-            orig_pid, err := syscall.PtraceGetEventMsg(pid)
-            if pid != int(orig_pid) {
-                log.Println("PIDs differ")
-            }
-            if err != nil {
-                log.Fatalln(err)
-            }
-            regs := &syscall.PtraceRegs{}
-            err = syscall.PtraceGetRegs(int(orig_pid), regs)
-            if err != nil {
-                log.Fatalln(err)
-            }
-            regs_of[pid] = regs
-            log.Printf("--- Dumping registers pre-%s: %+v\n", getSyscallName(regs.Orig_rax), regs)
-            path, err := readString(pid, uintptr(regs.Rsi))
-            if err == nil {
-                log.Printf("--- %s(%q)\n", getSyscallName(regs.Orig_rax), path)
-            }
-         }
+//      if pid == proc.Pid && wstatus.Exited() {
+//          log.Printf("parent pid %d exited\n", pid)
+//          continue
+//      }
 
-        if pid == proc.Pid && wstatus.Exited() {
-            log.Printf("parent pid %d exited\n", pid)
-            continue
-        }
-
-        if wstatus.StopSignal() == syscall.SIGTRAP {
+        if wstatus.StopSignal() == syscall.SIGTRAP && wstatus.TrapCause() == 0 {
             regs := &syscall.PtraceRegs{}
             var direction string
             val, ok := regs_of[pid]
@@ -105,10 +78,18 @@ func main() {
                     log.Fatalln(err)
                 }
                 regs_of[pid] = regs
-                log.Printf("Dumping registers pre-%s: %+v\n", getSyscallName(regs.Orig_rax), regs)
-                path, err := readString(pid, uintptr(regs.Rdi))
-                if err == nil {
-                    log.Printf("%s(%q)\n", getSyscallName(regs.Orig_rax), path)
+                switch syscall_number := regs.Orig_rax; syscall_number {
+                case syscall.SYS_EXECVE:
+                    path, err := readString(pid, uintptr(regs.Rdi))
+                    if err != nil {
+                        log.Println(err)
+                    } else {
+                        hash, err := hashFile(path)
+                        if err != nil {
+                            log.Fatalln(err)
+                        }
+                        log.Printf("execve(%q) -> %q\n", path, hash)
+                    }
                 }
             } else {
                 direction = "user <- kernel"
@@ -116,7 +97,6 @@ func main() {
                 delete(regs_of, pid)
                 switch syscall_number := regs.Orig_rax; syscall_number {
                 case syscall.SYS_OPENAT:
-                    log.Printf("Dumping registers: %+v\n", regs)
                     if regs.R10&syscall.O_RDWR != 0 {
 
                     } else if regs.R10&syscall.O_WRONLY != 0 {
@@ -145,18 +125,6 @@ func main() {
                             }
                             log.Printf("openat(%q, O_RDONLY) -> %q\n", path, hash)
                         }
-                    }
-                case syscall.SYS_EXECVE:
-                    log.Printf("Dumping registers: %+v\n", regs)
-                    path, err := readString(pid, uintptr(regs.Rdi))
-                    if err != nil {
-                        log.Println(err)
-                    } else {
-                        hash, err := hashFile(path)
-                        if err != nil {
-                            log.Fatalln(err)
-                        }
-                        log.Printf("execve(%q) -> %q\n", path, hash)
                     }
                 }
             }
