@@ -106,11 +106,11 @@ func main() {
 
                             // TODO: this is going to call ptrace 4096%sizeOfWord times because it won't stop on nulls
                             // we can improve on this by building a function that is aware of the data copied
-                            path, err := read_string(pid, uintptr(regs.Rsi))
+                            path, err := readString(pid, uintptr(regs.Rsi))
                             if err != nil {
                                 log.Fatalln(err)
                             }
-                            hash, err := hash_file(path)
+                            hash, err := hashFile(path)
                             if err != nil {
                                 log.Fatalln(err)
                             }
@@ -119,11 +119,11 @@ func main() {
                     }
                 case syscall.SYS_EXECVE:
                     log.Printf("Dumping registers: %+v\n", regs)
-                    path, err := read_string(pid, uintptr(regs.Rax))
+                    path, err := readString(pid, uintptr(regs.Rax))
                     if err != nil {
                         log.Println(err)
                     } else {
-                        hash, err := hash_file(path)
+                        hash, err := hashFile(path)
                         if err != nil {
                             log.Fatalln(err)
                         }
@@ -135,7 +135,7 @@ func main() {
                 "direction: %s, pid: %d, syscall: %q\n",
                 direction,
                 pid,
-                get_syscall_name(regs.Orig_rax),
+                getSyscallName(regs.Orig_rax),
             )
             err = syscall.PtraceSyscall(pid, 0)
             if err != nil {
@@ -145,7 +145,7 @@ func main() {
     }
 }
 
-func read_string(pid int, addr uintptr) (string, error) {
+func readString(pid int, addr uintptr) (string, error) {
     data := make([]byte, 4096)
     bytes_copied, _ := syscall.PtracePeekData(pid, addr, data)
     if bytes_copied == 0 {
@@ -155,7 +155,7 @@ func read_string(pid int, addr uintptr) (string, error) {
     return str, nil
 }
 
-func hash_file(filename string) (string, error) {
+func hashFile(filename string) (string, error) {
     f, err := os.Open(filename)
     if err != nil {
         return "", err
@@ -170,7 +170,7 @@ func hash_file(filename string) (string, error) {
     return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
-func get_syscall_name(syscall_ID uint64) string {
+func getSyscallName(syscall_ID uint64) string {
 	name, _ := sec.ScmpSyscall(syscall_ID).GetName()
 	return name
 }
