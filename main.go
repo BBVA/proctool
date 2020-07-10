@@ -106,7 +106,7 @@ func main() {
                 }
                 regs_of[pid] = regs
                 log.Printf("Dumping registers pre-%s: %+v\n", getSyscallName(regs.Orig_rax), regs)
-                path, err := readString(pid, uintptr(regs.Rsi))
+                path, err := readString(pid, uintptr(regs.Rdi))
                 if err == nil {
                     log.Printf("%s(%q)\n", getSyscallName(regs.Orig_rax), path)
                 }
@@ -148,7 +148,7 @@ func main() {
                     }
                 case syscall.SYS_EXECVE:
                     log.Printf("Dumping registers: %+v\n", regs)
-                    path, err := readString(pid, uintptr(regs.Rsi))
+                    path, err := readString(pid, uintptr(regs.Rdi))
                     if err != nil {
                         log.Println(err)
                     } else {
