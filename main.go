@@ -17,7 +17,7 @@ import (
 func main() {
     log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-    argv := []string{"./test-minimal"}
+    argv := []string{"./forker"}
 
     runtime.LockOSThread()
     proc, err := os.StartProcess(argv[0], argv, &os.ProcAttr{
@@ -60,17 +60,41 @@ func main() {
     regs_of := make(map[int]*syscall.PtraceRegs)
 
     for {
-        status := syscall.WaitStatus(0)
-        pid, err := syscall.Wait4(-1*pgid, &status, syscall.WALL, nil)
+        wstatus := syscall.WaitStatus(0)
+        pid, err := syscall.Wait4(-1*pgid, &wstatus, syscall.WALL, nil)
         if err != nil {
             log.Fatalln(err)
         }
 
-        if pid == proc.Pid && status.Exited() {
+        log.Printf("Trap cause: %d\n", wstatus.TrapCause())
+        if wstatus.TrapCause() == syscall.PTRACE_EVENT_EXEC {
+            fmt.Println("POR AQUI!!!")
+            orig_pid, err := syscall.PtraceGetEventMsg(pid)
+            if pid != int(orig_pid) {
+                log.Println("PIDs differ")
+            }
+            if err != nil {
+                log.Fatalln(err)
+            }
+            regs := &syscall.PtraceRegs{}
+            err = syscall.PtraceGetRegs(int(orig_pid), regs)
+            if err != nil {
+                log.Fatalln(err)
+            }
+            regs_of[pid] = regs
+            log.Printf("--- Dumping registers pre-%s: %+v\n", getSyscallName(regs.Orig_rax), regs)
+            path, err := readString(pid, uintptr(regs.Rsi))
+            if err == nil {
+                log.Printf("--- %s(%q)\n", getSyscallName(regs.Orig_rax), path)
+            }
+         }
+
+        if pid == proc.Pid && wstatus.Exited() {
             log.Printf("parent pid %d exited\n", pid)
             continue
         }
-        if !status.Exited() {
+
+        if wstatus.StopSignal() == syscall.SIGTRAP {
             regs := &syscall.PtraceRegs{}
             var direction string
             val, ok := regs_of[pid]
@@ -81,6 +105,11 @@ func main() {
                     log.Fatalln(err)
                 }
                 regs_of[pid] = regs
+                log.Printf("Dumping registers pre-%s: %+v\n", getSyscallName(regs.Orig_rax), regs)
+                path, err := readString(pid, uintptr(regs.Rsi))
+                if err == nil {
+                    log.Printf("%s(%q)\n", getSyscallName(regs.Orig_rax), path)
+                }
             } else {
                 direction = "user <- kernel"
                 regs = val
@@ -119,7 +148,7 @@ func main() {
                     }
                 case syscall.SYS_EXECVE:
                     log.Printf("Dumping registers: %+v\n", regs)
-                    path, err := readString(pid, uintptr(regs.Rax))
+                    path, err := readString(pid, uintptr(regs.Rsi))
                     if err != nil {
                         log.Println(err)
                     } else {
@@ -137,6 +166,8 @@ func main() {
                 pid,
                 getSyscallName(regs.Orig_rax),
             )
+        }
+        if !wstatus.Exited() {
             err = syscall.PtraceSyscall(pid, 0)
             if err != nil {
                 log.Fatalln("le_err", err)
