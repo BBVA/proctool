@@ -5,6 +5,8 @@ import (
     "fmt"
     "os"
     "log"
+    "crypto/md5"
+    "io"
     "runtime"
     "syscall"
     //"unsafe"
@@ -33,7 +35,10 @@ func main() {
     pgid, err := syscall.Getpgid(proc.Pid)
 
     // https://medium.com/golangspec/making-debugger-in-golang-part-ii-d2b8eb2f19e0
-    err = syscall.PtraceSetOptions(proc.Pid, syscall.PTRACE_O_TRACECLONE|syscall.PTRACE_O_TRACEFORK|syscall.PTRACE_O_TRACEVFORK)
+    err = syscall.PtraceSetOptions(
+        proc.Pid,
+        syscall.PTRACE_O_TRACECLONE|syscall.PTRACE_O_TRACEFORK|syscall.PTRACE_O_TRACEVFORK|syscall.PTRACE_O_TRACEEXEC,
+    )
 
     err = syscall.PtraceAttach(proc.Pid)
 
@@ -80,6 +85,7 @@ func main() {
                 delete(regs_of, pid)
                 switch syscall_number := regs.Orig_rax; syscall_number {
                 case syscall.SYS_OPENAT:
+                    log.Printf("Dumping registers: %+v\n", regs)
                     if regs.R10&syscall.O_RDWR != 0 {
 
                     } else if regs.R10&syscall.O_WRONLY != 0 {
@@ -95,15 +101,31 @@ func main() {
 
                             // TODO: check line 17.  We have to better understand if this is a hard requisite or not
                             // log.Printf("hashea, hashea %q\n", C.GoString((*C.char)(unsafe.Pointer(&regs.Rdi))))
-                            log.Printf("hashea, hashea!\n")
+
                             // TODO: this is going to call ptrace 4096%sizeOfWord times because it won't stop on nulls
                             // we can improve on this by building a function that is aware of the data copied
                             path, err := read_string(pid, uintptr(regs.Rsi))
                             if err != nil {
                                 log.Fatalln(err)
                             }
-                            log.Printf("hashea, hashea!: got this word: %q\n", path)
+                            hash, err := hash_file(path)
+                            if err != nil {
+                                log.Fatalln(err)
+                            }
+                            log.Printf("openat(%q, O_RDONLY) -> %q\n", path, hash)
                         }
+                    }
+                case syscall.SYS_EXECVE:
+                    log.Printf("Dumping registers: %+v\n", regs)
+                    path, err := read_string(pid, uintptr(regs.Rax))
+                    if err != nil {
+                        log.Println(err)
+                    } else {
+                        hash, err := hash_file(path)
+                        if err != nil {
+                            log.Fatalln(err)
+                        }
+                        log.Printf("execve(%q) -> %q\n", path, hash)
                     }
                 }
             }
@@ -124,4 +146,19 @@ func read_string(pid int, addr uintptr) (string, error) {
     }
     str := C.GoString((*C.char)(C.CBytes(data)))
     return str, nil
+}
+
+func hash_file(filename string) (string, error) {
+    f, err := os.Open(filename)
+    if err != nil {
+        return "", err
+    }
+    defer f.Close()
+
+    h := md5.New()
+    if _, err := io.Copy(h, f); err != nil {
+        return "", err
+    }
+
+    return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
