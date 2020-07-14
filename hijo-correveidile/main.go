@@ -13,12 +13,23 @@ import (
     sec "github.com/seccomp/libseccomp-golang"
 )
 
+
+const (
+    proctooled = "proctooled"
+)
+
 func main() {
     log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-    if os.Args[0] == "proctooled" {
+    if os.Args[0] == proctooled {
+        log.Println("Prepare to be amazed!")
         proc, err := os.StartProcess(os.Args[1], os.Args[1:], &os.ProcAttr{
             Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
+            Sys: &syscall.SysProcAttr{
+                // Setsid: true,
+                Setpgid: true,
+                Pgid: 0,
+            },
         })
         if err != nil {
             log.Fatalln(err)
@@ -30,41 +41,47 @@ func main() {
         }
     } else {
         runtime.LockOSThread()
-        proc, err := os.StartProcess(os.Args[0], append([]string{"proctooled"}, os.Args[1:]...), &os.ProcAttr{
-            Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
-            Sys: &syscall.SysProcAttr{
-                Ptrace: true,
+        log.Printf("%+v\n", os.Args)
+        proctooled, err := os.StartProcess(
+            os.Args[0],
+            append([]string{proctooled}, os.Args[1:]...),
+            &os.ProcAttr{
+                Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
+                Sys: &syscall.SysProcAttr{
+                    Ptrace: true,
+                },
+                Env: []string{"GOGC=off"},
             },
-        })
+        )
         if err != nil {
             log.Fatalln(err)
         }
 
-        _, err = proc.Wait()
+        _, err = proctooled.Wait()
         if err != nil {
             log.Fatalln(err)
         }
 
-        pgid, err := syscall.Getpgid(proc.Pid)
+        pgid, err := syscall.Getpgid(proctooled.Pid)
         if err != nil {
             log.Fatalln(err)
         }
 
         // https://medium.com/golangspec/making-debugger-in-golang-part-ii-d2b8eb2f19e0
         err = syscall.PtraceSetOptions(
-            proc.Pid,
+            proctooled.Pid,
             syscall.PTRACE_O_TRACECLONE|syscall.PTRACE_O_TRACEFORK|syscall.PTRACE_O_TRACEVFORK|syscall.PTRACE_O_TRACEEXEC,
         )
         if err != nil {
             log.Fatalln(err)
         }
 
-        err = syscall.PtraceAttach(proc.Pid)
+        err = syscall.PtraceAttach(proctooled.Pid)
         if err != syscall.EPERM {
             log.Fatalln(err)
         }
 
-        err = syscall.PtraceSyscall(proc.Pid, 0)
+        err = syscall.PtraceCont(proctooled.Pid, 0)
         if err != nil {
             log.Fatalln(err)
         }
@@ -73,12 +90,72 @@ func main() {
 
         regs_of := make(map[int]*syscall.PtraceRegs)
 
-        for {
-            wstatus := syscall.WaitStatus(0)
-            pid, err := syscall.Wait4(-1*pgid, &wstatus, syscall.WALL, nil)
+        c := make(chan int)
+
+        hashFileAndContinue := func(path string, pid int) {
+            hash, err := hashFile(path)
             if err != nil {
                 log.Fatalln(err)
             }
+            log.Printf("pid: %d, path: %q, hash: %q\n", pid, path, hash)
+            // TODO: not getting through
+            err = syscall.Kill(proctooled.Pid, syscall.SIGUSR1)
+            if err != nil {
+                log.Fatalln(err)
+            }
+            // proctooled.Signal(syscall.SIGUSR10)
+            c<-pid
+            log.Println("Reported to channel")
+        }
+
+        for {
+            wstatus := syscall.WaitStatus(0)
+            pid, err := syscall.Wait4(-1, &wstatus, syscall.WALL, nil)
+            if err != nil {
+                log.Fatalln(err)
+            }
+
+            if wstatus.Exited() {
+                log.Printf("I regret to inform you that your son %d died.  Moving on...\n", pid)
+                continue
+            }
+
+            traceePgid, err := syscall.Getpgid(pid)
+            if err != nil {
+                log.Fatalln(err)
+            }
+
+            log.Printf("Awaken by pid: %d with pgid=%d (proctooled==%d pgid=%d)\n", pid, traceePgid, proctooled.Pid, pgid)
+
+            if (pgid == traceePgid) {
+                log.Println("Awakened by proctooled or one of its threads")
+                // TODO: ensure that the sender of the signal is one of our goroutines (sender shares TGL with us)
+                if (wstatus.StopSignal() == syscall.SIGUSR1) {
+                    log.Println("Trying to read from channel n.5")
+                    FOR:
+                    for {
+                        select {
+                        case traceePid := <-c:
+                            log.Println("Read pid from channel")
+                            err = syscall.PtraceSyscall(traceePid, 0)
+                            if err != nil {
+                                log.Fatalln(err)
+                            }
+                        default:
+                            log.Println("Channel depleted")
+                            break FOR
+                        }
+                    }
+                }
+
+                err = syscall.PtraceCont(pid, int(wstatus.StopSignal()))
+                if err != nil {
+                    log.Fatalln(err)
+                }
+                continue
+            }
+
+            log.Println("Nietecito!")
 
             if wstatus.StopSignal() == syscall.SIGTRAP && wstatus.TrapCause() == 0 {
                 regs := &syscall.PtraceRegs{}
@@ -97,11 +174,9 @@ func main() {
                         if err != nil {
                             log.Println(err)
                         } else {
-                            hash, err := hashFile(path)
-                            if err != nil {
-                                log.Fatalln(err)
-                            }
-                            log.Printf("execve(%q) -> %q\n", path, hash)
+                            go hashFileAndContinue(path, pid)
+                            log.Printf("execve(%q) path being hashed\n", path)
+                            continue
                         }
                     }
                 } else {
@@ -132,11 +207,9 @@ func main() {
                                 if err != nil {
                                     log.Fatalln(err)
                                 }
-                                hash, err := hashFile(path)
-                                if err != nil {
-                                    log.Fatalln(err)
-                                }
-                                log.Printf("openat(%q, O_RDONLY) -> %q\n", path, hash)
+                                go hashFileAndContinue(path, pid)
+                                log.Printf("openat(%q, O_RDONLY) path being hashed\n", path)
+                                continue
                             }
                         }
                     }
