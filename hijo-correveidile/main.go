@@ -90,10 +90,10 @@ func main() {
             log.Fatalln(err)
         }
 
-        err = syscall.PtraceAttach(proctooled.Pid)
-        if err != syscall.EPERM {
-            log.Fatalln(err)
-        }
+        // err = syscall.PtraceAttach(proctooled.Pid)
+        //if err != syscall.EPERM {
+        //    log.Fatalln(err)
+        //}
 
         err = syscall.PtraceCont(proctooled.Pid, 0)
         if err != nil {
