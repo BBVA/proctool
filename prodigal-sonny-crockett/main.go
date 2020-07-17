@@ -88,18 +88,30 @@ func tracer() {
         case STOPCAUSE_TRACEE_SYSCALL:
             switch syscallStopPoint := decodeSyscallStopPoint; syscallStopPoint {
             case SYSCALL_STOP_POINT_EXECVE_CALL:
-                // TODO: extract path
-                // asynchronously hash that path, leaving the tracee stopped (will be awakened when handling STOPCAUSE_FOREMAN_SIGNAL > isAsyncTaskFinishedSignal()
-            case SYSCALL_STOP_POINT_OPENAT_CALL:
-                // Ignored
+                path := getOpenPath()
+                go hashFileAndContinue(pid, fd, path) // process continuation will be handled by STOPCAUSE_FOREMAN_SIGNAL > isAsyncTaskFinishedSignal()
             case SYSCALL_STOP_POINT_OPENAT_RETURN:
                 if syscall_was_successful() {
-                    switch mode := damElModePlis(); mode {
-                        case MODE_O_RDONLY, MODE_O_RDWR:
+                    alteredFiles // addressing by path
+                    path := getOpenPath()
+                    switch mode := getOpenMode(); mode {
+                    case MODE_O_RDONLY:
+                        go hashFileAndContinue(pid, fd, path) // process continuation will be handled by STOPCAUSE_FOREMAN_SIGNAL > isAsyncTaskFinishedSignal()
+                        delete(alteredFiles, path) // Ensure path is removed from table (might not be present)
+                    case MODE_O_RDWR:
+                        go hashFileAndContinue(pid, fd, path) // process continuation will be handled by STOPCAUSE_FOREMAN_SIGNAL > isAsyncTaskFinishedSignal()
+                        alteredFiles[path] = true
+                    case MODE_O_WRONLY: // Nota del Ruso: sólo importan las lecturas; WR al cierre (0x1623498761923487162938764912837649128374691)
+                        _, isAltered := alteredFiles[path]
+                        alteredFiles[path] = true // This update is strictly required when value is undefined, but setting it unconditionally for simplicity
+                        if isAltered {
                             go hashFileAndContinue(pid, fd, path) // process continuation will be handled by STOPCAUSE_FOREMAN_SIGNAL > isAsyncTaskFinishedSignal()
-
-                        case MODE_O_WRONLY: // Nota del Ruso: sólo importan las lecturas; WR al cierre (0x1623498761923487162938764912837649128374691)
+                        } else {
+                            syscall.PtraceSyscall(pid, 0)
+                        }
                     }
+                } else {
+                    syscall.PtraceSyscall(pid, 0)
                 }
             default:
                 syscall.PtraceSyscall(pid, 0)
