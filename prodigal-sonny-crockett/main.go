@@ -11,25 +11,26 @@ import (
 const (
     // http://www.catb.org/jargon/html/B/biff.html
     // TODO: explain what and why
+    // TODO: rename constants to follow Go's conventions
     BIFF_PROCESS = "[ProcTool Biff]"
 
     CHANNEL_READY = syscall.SIGUSR1
 
-    IS_BIFF = (1 << 0)
-    IS_SYSCALL = (1 << 1)
-    IS_SIGNAL = (1 << 2)
-    IS_EXIT = (1 << 3)
+    IS_BIFF    = 1 << iota
+    IS_SYSCALL
+    IS_SIGNAL
+    IS_EXIT
 
-    STOPCAUSE_IGNORABLE = 0
+    STOPCAUSE_IGNORABLE          = 0
     STOPCAUSE_SURVEILLED_SYSCALL = IS_SYSCALL
-    STOPCAUSE_SURVEILLED_SIGNAL = IS_SIGNAL
-    STOPCAUSE_SURVEILLED_EXIT = IS_EXIT
-    STOPCAUSE_BIFF_SYSCALL = IS_BIFF|IS_SYSCALL
-    STOPCAUSE_BIFF_SIGNAL = IS_BIFF|IS_SIGNAL
-    STOPCAUSE_BIFF_EXIT = IS_BIFF|IS_EXIT
+    STOPCAUSE_SURVEILLED_SIGNAL  = IS_SIGNAL
+    STOPCAUSE_SURVEILLED_EXIT    = IS_EXIT
+    STOPCAUSE_BIFF_SYSCALL       = IS_BIFF | IS_SYSCALL
+    STOPCAUSE_BIFF_SIGNAL        = IS_BIFF | IS_SIGNAL
+    STOPCAUSE_BIFF_EXIT          = IS_BIFF | IS_EXIT
 
-    SYSCALL_STOP_POINT_OPENAT_RETURN
-    SYSCALL_STOP_POINT_EXECVE_CALL
+    SYSCALL_STOP_POINT_OPENAT_RETURN  = // TODO
+    SYSCALL_STOP_POINT_EXECVE_CALL    = // TODO
 )
 
 func main() {
@@ -49,7 +50,6 @@ func setupLogger() {
     // spawned, or traced, or whatever).   When abort is the only way forward.
     // We'll dump info to stderr, then.
 }
-
 
 func isTracer() bool {
     return os.Args[0] != BIFF_PROCESS
