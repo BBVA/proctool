@@ -1,6 +1,10 @@
 package main
 
 import (
+    "C"
+    "crypto/md5"
+    "fmt"
+    "io"
     "log"
     "os"
     "runtime"
@@ -29,8 +33,13 @@ const (
     STOPCAUSE_BIFF_SIGNAL        = IS_BIFF | IS_SIGNAL
     STOPCAUSE_BIFF_EXIT          = IS_BIFF | IS_EXIT
 
-    SYSCALL_STOP_POINT_OPENAT_RETURN  = iota
+    SYSCALL_STOP_POINT_UNMONITORED = iota
+    SYSCALL_STOP_POINT_OPENAT_RETURN
     SYSCALL_STOP_POINT_EXECVE_CALL
+
+    MODE_O_RDONLY = iota
+    MODE_O_RDWR
+    MODE_O_WRONLY
 )
 
 func main() {
@@ -150,6 +159,110 @@ func isAsyncTaskFinishedSignal(biffPgid int, wstatus syscall.WaitStatus) bool {
     return wstatus.StopSignal() == CHANNEL_READY
 }
 
+type safeBool struct {
+    Value bool
+    m *sync.Mutex
+}
+
+func (f *safeBool) Lock() {
+    f.m.Lock()
+}
+
+func (f *safeBool) SetAndUnlock(v bool) {
+    f.Value = v
+    f.m.Unlock()
+}
+
+func decodeSyscallStopPoint(regs syscall.PtraceRegs, isReturning bool) int {
+
+    // NOTE: ptrace stop-enter-syscall and stop-exit-syscall cannot be
+    // distinguised by the contents of the registers.
+    // RTFM!
+    if syscall_number := regs.Orig_rax; syscall_number == syscall.SYS_EXECVE && !isReturning { 
+        return SYSCALL_STOP_POINT_EXECVE_CALL
+    } else if syscall_number == syscall.SYS_OPENAT && isReturning {
+        return SYSCALL_STOP_POINT_OPENAT_RETURN
+    } else {
+        return SYSCALL_STOP_POINT_UNMONITORED
+    }
+}
+
+func getOpenAtPath(pid int, regs syscall.PtraceRegs) (string, error) {
+    path, err := readString(pid, uintptr(regs.Rsi))
+    if err != nil {
+        return "", err
+    }
+    return path, nil
+}
+
+func getExecvePath(pid int, regs syscall.PtraceRegs) (string, error) {
+    path, err := readString(pid, uintptr(regs.Rdi))
+    if err != nil {
+        return "", err
+    }
+    return path, nil
+}
+
+func hashExecAndContinue(pid int, path string) {
+    // TODO: revisit this function's name
+}
+
+func isOpenAtOk(regs syscall.PtraceRegs) bool {
+    return int64(regs.Rax) > -1
+}
+
+func getOpenAtMode(regs syscall.PtraceRegs) int {
+    if regs.R10&syscall.O_RDWR != 0 {
+        return MODE_O_RDWR
+    } else if regs.R10&syscall.O_WRONLY != 0 {
+        return MODE_O_WRONLY
+    } else { // O_RDONLY
+        return MODE_O_RDONLY
+    }
+}
+
+func getOpenAtFd(regs syscall.PtraceRegs) int {
+    return int(regs.Rax)
+}
+
+func readString(pid int, addr uintptr) (string, error) {
+    data := make([]byte, 4096)
+    bytes_copied, _ := syscall.PtracePeekData(pid, addr, data)
+    if bytes_copied == 0 {
+        return "", fmt.Errorf("0-byte string returned")
+    }
+    str := C.GoString((*C.char)(C.CBytes(data)))
+    return str, nil
+}
+
+func hashFile(pid, fd int, filename string) {
+    f, err := os.Open(fmt.Sprintf("/proc/%d/fd/%d", pid, fd))
+    if err != nil {
+        // TODO: log open failed
+        return
+    }
+    defer f.Close()
+
+    h := md5.New()
+    if _, err := io.Copy(h, f); err != nil {
+        // TODO: log hash failed
+        return
+    }
+
+    log.Printf("%s: %x\n", filename, h.Sum(nil))
+}
+
+func hashFileAndContinue(biffPid, traceePid, fd int, filename string, stoppedSurveilledPid chan int) {
+    hashFile(traceePid, fd, filename)
+
+    err := syscall.Kill(biffPid, CHANNEL_READY)
+    if err != nil {
+        // TODO: use proper logger
+        log.Fatalln(err)
+    }
+    stoppedSurveilledPid<-traceePid
+}
+
 func trace() int {
     runtime.LockOSThread()
 
@@ -165,7 +278,9 @@ func trace() int {
 
     stoppedSurveilledPid := make(chan int)
     // TODO: use sync.Map to ensure safe concurrent access
-    alteredFiles := make([string]*sync.RWMutex) // addressing by path
+
+    var alteredFiles sync.Map // addressing by path [string]*safeBool
+    returningFromSyscall := make(map[int]bool)
 
     for {
         wstatus := syscall.WaitStatus(0)
@@ -199,35 +314,75 @@ func trace() int {
             syscall.PtraceSyscall(traceePid, int(wstatus.StopSignal()))
 
         case STOPCAUSE_SURVEILLED_SYSCALL:
-            switch syscallStopPoint := decodeSyscallStopPoint; syscallStopPoint {
+            // TODO: encapsulate this in a struct w/ decodeSyscallStopPoint as a method?
+            isReturning := returningFromSyscall[traceePid]
+            returningFromSyscall[traceePid] = !isReturning
+
+            regs := &syscall.PtraceRegs{}
+            err = syscall.PtraceGetRegs(traceePid, regs)
+            if err != nil {
+                // TODO: log process is dead
+                continue
+            }
+
+            switch syscallStopPoint := decodeSyscallStopPoint(*regs, isReturning); syscallStopPoint {
             case SYSCALL_STOP_POINT_EXECVE_CALL:
-                path := getOpenPath()
-                go hashFileAndContinue(traceePid, fd, path) // process continuation will be handled by STOPCAUSE_BIFF_SIGNAL > isAsyncTaskFinishedSignal()
+                path, err := getExecvePath(traceePid, *regs)
+                if err != nil {
+                    // TODO: log *path is not pointing to a string
+                    syscall.PtraceSyscall(traceePid, 0)
+                } else {
+                    // TODO: there is no such thing as an `fd` here
+                    go hashExecAndContinue(traceePid, path) // process continuation will be handled by STOPCAUSE_BIFF_SIGNAL > isAsyncTaskFinishedSignal()
+                }
             case SYSCALL_STOP_POINT_OPENAT_RETURN:
-                if syscall_was_successful() {
-                    path := getOpenPath()
-                    switch mode := getOpenMode(); mode {
-                    case MODE_O_RDONLY:
-                        go hashFile(traceePid, fd, path) // process continuation will be handled by STOPCAUSE_BIFF_SIGNAL > isAsyncTaskFinishedSignal()
-                        // delete(alteredFiles, path) // Ensure path is removed from table (might not be present)
+                if isOpenAtOk(*regs) {
+                    path, err := getOpenAtPath(traceePid, *regs)
+                    if err != nil {
+                        // TODO: log *path is not pointing to a string
                         syscall.PtraceSyscall(traceePid, 0)
-                    case MODE_O_RDWR:
-                        go hashFileAndContinue(traceePid, fd, path) // process continuation will be handled by STOPCAUSE_BIFF_SIGNAL > isAsyncTaskFinishedSignal()
-                        alteredFiles[path] = true
-                    case MODE_O_WRONLY: // Nota del Ruso: sólo importan las lecturas; WR al cierre (0x1623498761923487162938764912837649128374691)
-                        _, isAltered := alteredFiles[path]
-                        alteredFiles[path] = true // This update is strictly required when value is undefined, but setting it unconditionally for simplicity
-                        if isAltered {
-                            go hashFileAndContinue(pid, fd, path) // process continuation will be handled by STOPCAUSE_BIFF_SIGNAL > isAsyncTaskFinishedSignal()
-                        } else {
-                            syscall.PtraceSyscall(pid, 0)
+                    } else {
+                        fd := getOpenAtFd(*regs)
+                        switch mode := getOpenAtMode(*regs); mode {
+                        case MODE_O_RDONLY:
+                            // Dead or alive, you're coming with me
+                            func () {
+                                tmp, _ := alteredFiles.LoadOrStore(path, &safeBool{})
+                                flag := tmp.(*safeBool)
+                                flag.Lock()
+                                defer flag.SetAndUnlock(false)
+                                go hashFile(traceePid, fd, path) // process continuation will be handled by STOPCAUSE_BIFF_SIGNAL > isAsyncTaskFinishedSignal()
+                                err := syscall.PtraceSyscall(traceePid, 0)
+                                if err != nil {
+                                    // TODO: log process is dead
+                                }
+                            }()
+                        case MODE_O_RDWR:
+                            go func () {
+                                tmp, _ := alteredFiles.LoadOrStore(path, &safeBool{})
+                                flag := tmp.(*safeBool)
+                                flag.Lock()
+                                defer flag.SetAndUnlock(true)
+                                hashFileAndContinue(biffPid, traceePid, fd, path, stoppedSurveilledPid) // process continuation will be handled by STOPCAUSE_BIFF_SIGNAL > isAsyncTaskFinishedSignal()
+                            }()
+                        case MODE_O_WRONLY: // Nota del Ruso: sólo importan las lecturas; WR al cierre (0x1623498761923487162938764912837649128374691)
+                            func () {
+                                tmp, _ := alteredFiles.LoadOrStore(path, &safeBool{})
+                                flag := tmp.(*safeBool)
+                                flag.Lock()
+                                defer flag.SetAndUnlock(true)
+                                err := syscall.PtraceSyscall(traceePid, 0)
+                                if err != nil {
+                                    // TODO: log process is dead
+                                }
+                            }()
                         }
                     }
                 } else {
-                    syscall.PtraceSyscall(pid, 0)
+                    syscall.PtraceSyscall(traceePid, 0)
                 }
             default:
-                syscall.PtraceSyscall(pid, 0)
+                syscall.PtraceSyscall(traceePid, 0)
             }
 
         default:
