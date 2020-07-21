@@ -1,8 +1,5 @@
-module github.com/BBVA/poc-go-ptrace
+module github.com/BBVA/poc-go-trace
 
 go 1.14
 
-require (
-	github.com/seccomp/libseccomp-golang v0.9.1
-	go.uber.org/zap v1.15.0 // indirect
-)
+require go.uber.org/zap v1.15.0
