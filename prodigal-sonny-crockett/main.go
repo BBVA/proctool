@@ -349,7 +349,7 @@ func trace() int {
 		if err != nil {
 			// TODO: capture no child processes
 			zap.L().Error("Error waiting for children", zap.Error(err), zap.Int("traceStep", traceStep))
-			return 127
+			return 127 // FIXME: this shouldn't happen, and looks hairy
 		}
 
 		switch stopCause := decodeStopCause(wstatus, traceePid, biffPgid); stopCause {
