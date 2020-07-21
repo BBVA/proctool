@@ -310,14 +310,15 @@ func trace() int {
 		func(key, value interface{}) bool {
 			func() {
 				path := key.(string)
-				wasModified := value.(safeBool)
+				wasModified := value.(*safeBool)
 
 				wasModified.Lock()
 				defer wasModified.SetAndUnlock(false)
-				// XXX: Always false! sync.Map is not writing... must be pointers
-				// if !wasModified.Value {
-				// 	return
-				// }
+
+				// Already hashed, skipping
+				if !wasModified.Value {
+					return
+				}
 
 				if hash, err := hashFile(path); err != nil {
 					zap.L().Error(
@@ -443,8 +444,8 @@ func trace() int {
 								zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPENAT_RETURN"))
 							// Dead or alive, you're coming with me
 							func() {
-								tmp, _ := alteredFiles.LoadOrStore(path, safeBool{})
-								flag := tmp.(safeBool)
+								tmp, _ := alteredFiles.LoadOrStore(path, &safeBool{})
+								flag := tmp.(*safeBool)
 								flag.Lock()
 								defer flag.SetAndUnlock(false)
 								go func() {
@@ -498,8 +499,8 @@ func trace() int {
 								zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 								zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPENAT_RETURN"))
 							go func() {
-								tmp, _ := alteredFiles.LoadOrStore(path, safeBool{})
-								flag := tmp.(safeBool)
+								tmp, _ := alteredFiles.LoadOrStore(path, &safeBool{})
+								flag := tmp.(*safeBool)
 								flag.Lock()
 								defer flag.SetAndUnlock(true)
 								hashFileAndContinue(biffPid, traceePid, fd, path, stoppedSurveilledPid) // process continuation will be handled by STOPCAUSE_BIFF_SIGNAL > isAsyncTaskFinishedSignal()
@@ -515,8 +516,8 @@ func trace() int {
 								zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 								zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPENAT_RETURN"))
 							func() {
-								tmp, _ := alteredFiles.LoadOrStore(path, safeBool{})
-								flag := tmp.(safeBool)
+								tmp, _ := alteredFiles.LoadOrStore(path, &safeBool{})
+								flag := tmp.(*safeBool)
 								flag.Lock()
 								defer flag.SetAndUnlock(true)
 								err := syscall.PtraceSyscall(traceePid, 0)
