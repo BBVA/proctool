@@ -302,13 +302,18 @@ func trace() int {
 	}
 
 	var alteredFiles sync.Map // addressing by path [string]*safeBool
+	var pendingHashes sync.WaitGroup
 	stoppedSurveilledPid := make(chan int)
 	returningFromSyscall := make(map[int]bool)
 	traceStep := 0
 
+	defer pendingHashes.Wait()
 	defer alteredFiles.Range(
 		func(key, value interface{}) bool {
-			func() {
+			pendingHashes.Add(1)
+			go func() {
+				defer pendingHashes.Done()
+
 				path := key.(string)
 				wasModified := value.(*safeBool)
 
@@ -415,7 +420,11 @@ func trace() int {
 						zap.Int("traceStep", traceStep),
 						zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 						zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_EXECVE_CALL"))
-					go hashExecAndContinue(biffPid, traceePid, path, stoppedSurveilledPid) // process continuation will be handled by STOPCAUSE_BIFF_SIGNAL > isAsyncTaskFinishedSignal()
+					pendingHashes.Add(1)
+					go func() {
+						defer pendingHashes.Done()
+						hashExecAndContinue(biffPid, traceePid, path, stoppedSurveilledPid) // process continuation will be handled by STOPCAUSE_BIFF_SIGNAL > isAsyncTaskFinishedSignal()
+					}()
 				}
 			case SYSCALL_STOP_POINT_OPENAT_RETURN:
 				if isOpenAtOk(*regs) {
@@ -448,7 +457,9 @@ func trace() int {
 								flag := tmp.(*safeBool)
 								flag.Lock()
 								defer flag.SetAndUnlock(false)
+								pendingHashes.Add(1)
 								go func() {
+									defer pendingHashes.Done()
 									if hash, err := hashFile(fmt.Sprintf("/proc/%d/fd/%d", traceePid, fd)); err != nil {
 										zap.L().Error(
 											"Cannot hash file via fd",
@@ -498,7 +509,9 @@ func trace() int {
 								zap.String("mode", "MODE_O_RDWR"),
 								zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 								zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPENAT_RETURN"))
+							pendingHashes.Add(1)
 							go func() {
+								defer pendingHashes.Done()
 								tmp, _ := alteredFiles.LoadOrStore(path, &safeBool{})
 								flag := tmp.(*safeBool)
 								flag.Lock()
