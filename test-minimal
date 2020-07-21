@@ -1,4 +1,0 @@
-#!/bin/dash
-
-/bin/echo Write from parent > /tmp/parent.txt
-(/bin/echo Write from child > /tmp/child.txt)

@@ -141,21 +141,24 @@ func traceBiff(pid int) error {
 	return syscall.PtraceCont(pid, 0)
 }
 
-func decodeStopCause(wstatus syscall.WaitStatus, traceePid, biffPgid int) (stopCause int) {
-	traceePgid, err := syscall.Getpgid(traceePid)
-	if err != nil {
-		// TODO: log event to file (tracee was possibly SIGKILLed)
-		stopCause = STOPCAUSE_IGNORABLE
-		return
-	}
-
-	if traceePgid == biffPgid {
+func decodeStopCause(wstatus syscall.WaitStatus, traceePid, biffPid, biffPgid int) (stopCause int) {
+	if traceePid == biffPid {
 		stopCause |= IS_BIFF
+	} else {
+		traceePgid, err := syscall.Getpgid(traceePid)
+		if err != nil {
+			stopCause = STOPCAUSE_IGNORABLE
+			return
+		}
+		if traceePgid == biffPgid {
+			stopCause |= IS_BIFF
+		}
 	}
 
 	if wstatus.Exited() {
 		stopCause |= IS_EXIT
-	} else if wstatus.StopSignal() == syscall.SIGTRAP && wstatus.TrapCause() == 0 {
+	} else if wstatus.StopSignal() == syscall.SIGTRAP {
+		// } else if wstatus.StopSignal() == syscall.SIGTRAP && wstatus.TrapCause() == 0 {
 		stopCause |= IS_SYSCALL
 	} else {
 		stopCause |= IS_SIGNAL
@@ -352,10 +355,17 @@ func trace() int {
 			return 127 // FIXME: this shouldn't happen, and looks hairy
 		}
 
-		switch stopCause := decodeStopCause(wstatus, traceePid, biffPgid); stopCause {
+		switch stopCause := decodeStopCause(wstatus, traceePid, biffPid, biffPgid); stopCause {
 		case STOPCAUSE_BIFF_EXIT:
-			zap.L().Info("Biff process exited", zap.Int("traceePid", traceePid), zap.String("stopCause", "STOPCAUSE_BIFF_EXIT"), zap.Int("traceStep", traceStep))
-			return wstatus.ExitStatus()
+			exitStatus := wstatus.ExitStatus()
+			zap.L().Info(
+				"Biff process exited",
+				zap.Int("traceePid", traceePid),
+				zap.String("stopCause", "STOPCAUSE_BIFF_EXIT"),
+				zap.Int("traceStep", traceStep),
+				zap.Int("exitStatus", exitStatus),
+			)
+			return exitStatus
 		case STOPCAUSE_BIFF_SIGNAL:
 			if isAsyncTaskFinishedSignal(biffPgid, wstatus) {
 				surveilledToBeContinued := <-stoppedSurveilledPid
@@ -369,11 +379,22 @@ func trace() int {
 				syscall.PtraceCont(traceePid, 0)
 				// TODO: Capture errors
 			} else {
-				zap.L().Info("Biff process received an unknown signal!", zap.Int("traceePid", traceePid), zap.String("stopCause", "STOPCAUSE_BIFF_SIGNAL"), zap.Int("traceStep", traceStep))
+				zap.L().Info(
+					"Biff process received an unknown signal!",
+					zap.Int("traceePid", traceePid),
+					zap.String("stopCause", "STOPCAUSE_BIFF_SIGNAL"),
+					zap.Int("traceStep", traceStep),
+					zap.Int("stopSignal", int(wstatus.StopSignal())),
+				)
 				syscall.PtraceCont(traceePid, int(wstatus.StopSignal()))
 			}
 		case STOPCAUSE_BIFF_SYSCALL:
-			zap.L().Info("Biff process stop calling or returning from syscall", zap.Int("traceePid", traceePid), zap.String("stopCause", "STOPCAUSE_BIFF_SYSCALL"), zap.Int("traceStep", traceStep))
+			zap.L().Info(
+				"Biff process stop calling or returning from syscall",
+				zap.Int("traceePid", traceePid),
+				zap.String("stopCause", "STOPCAUSE_BIFF_SYSCALL"),
+				zap.Int("traceStep", traceStep),
+			)
 			syscall.PtraceCont(traceePid, 0)
 
 		case STOPCAUSE_SURVEILLED_EXIT:
@@ -541,21 +562,50 @@ func trace() int {
 						}
 					}
 				} else {
+					zap.L().Info(
+						"The process tried to open a file but the kernel returned an error",
+						zap.Int("traceePid", traceePid),
+						zap.Int("traceStep", traceStep),
+						zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
+						zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPENAT_RETURN"),
+					)
 					syscall.PtraceSyscall(traceePid, 0)
 				}
 			case SYSCALL_STOP_POINT_UNMONITORED:
-				zap.L().Info("Analyzing SYSCALL_STOP_POINT_UNMONITORED", zap.Int("traceePid", traceePid), zap.Int("traceStep", traceStep))
+				zap.L().Info(
+					"Analyzing SYSCALL_STOP_POINT_UNMONITORED",
+					zap.Int("traceePid", traceePid),
+					zap.Int("traceStep", traceStep),
+					zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
+					zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_UNMONITORED"),
+				)
 				syscall.PtraceSyscall(traceePid, 0)
 			default:
-				zap.L().Fatal("Unmanaged SYSCALL_STOP_POINT", zap.Int("cause", stopCause), zap.Int("traceStep", traceStep))
+				zap.L().Fatal(
+					"Unmanaged SYSCALL_STOP_POINT",
+					zap.Int("traceePid", traceePid),
+					zap.Int("traceStep", traceStep),
+					zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
+					zap.Int("syscallStopPoint", syscallStopPoint),
+				)
 			}
 
 		case STOPCAUSE_IGNORABLE:
-			zap.L().Info("Attending STOPCAUSE_IGNORABLE", zap.Int("traceePid", traceePid), zap.Int("traceStep", traceStep))
+			zap.L().Error(
+				"Attending STOPCAUSE_IGNORABLE.  Cannot get tracee PGID",
+				zap.Int("traceePid", traceePid),
+				zap.Int("traceStep", traceStep),
+				zap.String("stopCause", "STOPCAUSE_IGNORABLE"),
+			)
 			syscall.PtraceSyscall(traceePid, 0)
 
 		default:
-			zap.L().Fatal("Unmanaged STOPCAUSE", zap.Int("cause", stopCause), zap.Int("traceStep", traceStep))
+			zap.L().Fatal(
+				"Unmanaged STOPCAUSE",
+				zap.Int("traceePid", traceePid),
+				zap.Int("stopCause", stopCause),
+				zap.Int("traceStep", traceStep),
+			)
 		}
 	}
 }
