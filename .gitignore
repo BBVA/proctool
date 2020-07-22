@@ -1,3 +1,4 @@
 .hypothesis
 .python-deps
 bin/*
+.pytest_cache
