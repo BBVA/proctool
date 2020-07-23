@@ -1,0 +1,23 @@
+#!/usr/bin/python
+
+import threading
+import gc
+import os
+import sys
+import time
+
+gc.disable()
+
+
+try:
+    remaining = int(sys.argv[1])
+except IndexError:
+    remaining = 1
+
+ts = []
+for _ in range(remaining):
+    ts.append(threading.Thread(target=time.sleep, args=(1,)))
+    ts[-1].start()
+
+for t in ts:
+    t.join()

@@ -1,5 +1,10 @@
 package main
 
+// CAVEAT EMPTOR: The current design assumes that the surveilled process spawned by
+// BIFF will wait for each and every descendant to die before dying himself.
+// Otherwise, the descendants surviving the parent surveilled process won't be
+// monitored after the fact.
+
 import (
 	"C"
 	"crypto/md5"
@@ -291,7 +296,7 @@ func hashExecAndContinue(biffPid, traceePid int, path string, stoppedSurveilledP
 	return
 }
 
-func trace() int {
+func trace() (exitStatus int) {
 	runtime.LockOSThread()
 
 	zap.L().Info("Starting biff process")
@@ -352,13 +357,14 @@ func trace() int {
 		traceePid, err := syscall.Wait4(-1, &wstatus, syscall.WALL, nil)
 		if err != nil {
 			// TODO: capture no child processes
-			zap.L().Error("Error waiting for children", zap.Error(err), zap.Int("traceStep", traceStep))
-			return 127 // FIXME: this shouldn't happen, and looks hairy
+			zap.L().Info("There are no more children to wait for", zap.Error(err), zap.Int("traceStep", traceStep))
+			// XXX: This will happend once all children finish
+			return
 		}
 
 		switch stopCause := decodeStopCause(wstatus, traceePid, biffPid, biffPgid); stopCause {
 		case STOPCAUSE_BIFF_EXIT:
-			exitStatus := wstatus.ExitStatus()
+			exitStatus = wstatus.ExitStatus()
 			zap.L().Info(
 				"Biff process exited",
 				zap.Int("traceePid", traceePid),
@@ -366,7 +372,6 @@ func trace() int {
 				zap.Int("traceStep", traceStep),
 				zap.Int("exitStatus", exitStatus),
 			)
-			return exitStatus
 		case STOPCAUSE_BIFF_SIGNAL:
 			if isAsyncTaskFinishedSignal(biffPgid, wstatus) {
 				surveilledToBeContinued := <-stoppedSurveilledPid

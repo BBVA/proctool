@@ -1,3 +1,4 @@
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -55,14 +56,23 @@ def test_honor_child_last_wish():
     assert exitcode == 42
 
 
+
+@pytest.mark.skip("This cannot be achieved with the current design")
+def test_waits_for_surveilled_event_if_biff_dies_prematurely():
+    before = datetime.now()
+    proctool("/bin/sh", "-c", "/bin/sleep 3 & disown")
+    after = datetime.now()
+    assert (after - before).seconds >= 3
+
+
 @pytest.mark.skip
 @given(st.integers(min_value=1, max_value=42))
-def test_follow_forks(number):
+def test_follow_parent_forks(number):
     """
-    $ strace -f ./tests/fixtures/02-follow-forks 12 2>&1 | grep exited | wc -l
+    $ strace -f ./tests/fixtures/02-follow-parent-forks 12 2>&1 | grep exited | wc -l
     13
     """
-    _, log = proctool(f"{PROJECT}/tests/fixtures/02-follow-forks", str(number))
+    _, log = proctool(f"{PROJECT}/tests/fixtures/02-follow-parent-forks", str(number))
 
     surveilled_exit = set()
     for entry in log:
@@ -72,6 +82,24 @@ def test_follow_forks(number):
     assert len(surveilled_exit) == number+1 
 
 
+@pytest.mark.skip
+@given(st.integers(min_value=1, max_value=42))
+def test_follow_children_forks(number):
+    """
+    $ strace -f ./tests/fixtures/03-follow-children-forks 12 2>&1 | grep exited | wc -l
+    13
+    """
+    _, log = proctool(f"{PROJECT}/tests/fixtures/03-follow-children-forks", str(number))
+
+    surveilled_exit = set()
+    for entry in log:
+        if entry.get('stopCause', None) == 'STOPCAUSE_SURVEILLED_EXIT':
+            surveilled_exit.add(entry['traceePid'])
+
+    assert len(surveilled_exit) == number+1 
+
+
+@pytest.mark.skip
 @given(
     inputs=st.dictionaries(
         keys=st.text(alphabet=string.ascii_lowercase),
@@ -88,7 +116,7 @@ def test_capture_inputs_of_a_process(inputs):
 
         program_path = os.path.join(tmpdir, 'program.py')
         with open(program_path, 'w') as program:
-            program.write(f"""#!/usr/bin/python
+            program.write(f"""#!/usr/bin/env python
 import os.path
 import pickle
 
