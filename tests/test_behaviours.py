@@ -1,7 +1,12 @@
+import hashlib
 import json
-import os.path
+import os
+import pickle
 import shlex
+import stat
+import string
 import subprocess
+import tempfile
 
 from hypothesis import given
 from hypothesis import strategies as st
@@ -14,7 +19,15 @@ PROJECT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 def proctool(*args):
     command = [f"{PROJECT}/bin/proctool"] + list(args)
     exitcode, lines = subprocess.getstatusoutput(" ".join([shlex.quote(c) for c in command]))
-    return (exitcode, [json.loads(l) for l in lines.splitlines()])
+    def decode():
+        for l in lines.splitlines():
+            try:
+                yield json.loads(l)
+            except:
+                import pdb
+                pdb.set_trace()
+
+    return (exitcode, list(decode()))
 
 
 def test_detect_biffs_dead():
@@ -42,6 +55,7 @@ def test_honor_child_last_wish():
     assert exitcode == 42
 
 
+@pytest.mark.skip
 @given(st.integers(min_value=1, max_value=42))
 def test_follow_forks(number):
     """
@@ -56,3 +70,48 @@ def test_follow_forks(number):
             surveilled_exit.add(entry['traceePid'])
 
     assert len(surveilled_exit) == number+1 
+
+
+@given(
+    inputs=st.dictionaries(
+        keys=st.text(alphabet=string.ascii_lowercase),
+        values=st.binary()))
+def test_capture_inputs_of_a_process(inputs):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for name, content in inputs.items():
+            with open(os.path.join(tmpdir, f"input_{name}"), 'wb') as tmpfile:
+                tmpfile.write(content)
+
+        program_data = pickle.dumps(
+            {'inputs': list(inputs.keys())}
+        )
+
+        program_path = os.path.join(tmpdir, 'program.py')
+        with open(program_path, 'w') as program:
+            program.write(f"""#!/usr/bin/python
+import os.path
+import pickle
+
+DATA=pickle.loads({repr(program_data)})
+TMPDIR={repr(tmpdir)}
+
+for filename in DATA['inputs']:
+    with open(os.path.join(TMPDIR, 'input_'+filename), 'rb'):
+        pass
+
+""")
+            os.fchmod(program.fileno(), stat.S_IRWXU)
+
+        exitcode, log = proctool(program_path)
+
+        input_hashes = set(hashlib.md5(c).hexdigest() for c in inputs.values())
+
+        for entry in log:
+            try:
+                hash = entry['hash']
+                input_hashes.remove(hash)
+            except KeyError:
+                # Log entry is not per hashed file or hash is not on input_hashes
+                pass
+
+        assert len(input_hashes) == 0, str(input_hashes)
