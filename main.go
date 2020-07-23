@@ -104,6 +104,7 @@ func spawnSurveilled() (exitCode int) {
 }
 
 func startBiff() (pid, pgid int, err error) {
+	// TODO: Add at least PATH to Env, so that /usr/bin/env interpreter can actually work
 	biff, err := os.StartProcess(
 		os.Args[0],
 		append([]string{BIFF_PROCESS}, os.Args[1:]...),
