@@ -112,7 +112,7 @@ func traceBiff(pid int) error {
 		return err
 	}
 
-	return syscall.PtraceSyscall(pid, 0)
+	return syscall.PtraceCont(pid, 0)
 }
 
 func decodeStopCause(wstatus syscall.WaitStatus, traceePid, biffPid int) (stopCause int) {
@@ -339,7 +339,7 @@ func trace() (exitStatus int) {
 					zap.Int("traceStep", traceStep),
 					zap.Int("surveilledToBeContinued", surveilledToBeContinued))
 				syscall.PtraceSyscall(surveilledToBeContinued, 0)
-				syscall.PtraceSyscall(traceePid, 0)
+				syscall.PtraceCont(traceePid, 0)
 				// TODO: Capture errors
 			} else {
 				zap.L().Info(
@@ -349,7 +349,7 @@ func trace() (exitStatus int) {
 					zap.Int("traceStep", traceStep),
 					zap.Int("stopSignal", int(wstatus.StopSignal())),
 				)
-				syscall.PtraceSyscall(traceePid, int(wstatus.StopSignal()))
+				syscall.PtraceCont(traceePid, int(wstatus.StopSignal()))
 			}
 		case STOPCAUSE_BIFF_SYSCALL:
 			zap.L().Info(
@@ -358,7 +358,7 @@ func trace() (exitStatus int) {
 				zap.String("stopCause", "STOPCAUSE_BIFF_SYSCALL"),
 				zap.Int("traceStep", traceStep),
 			)
-			syscall.PtraceSyscall(traceePid, 0)
+			syscall.PtraceCont(traceePid, 0)
 
 		case STOPCAUSE_SURVEILLED_EXIT:
 			zap.L().Info("Surveiled process exited", zap.Int("traceePid", traceePid), zap.String("stopCause", "STOPCAUSE_SURVEILLED_EXIT"), zap.Int("traceStep", traceStep))
