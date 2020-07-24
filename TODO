@@ -1,0 +1,5 @@
+1. Write test for the RDWR case
+2. Write a FSM test with hypotesis, using complex hierarchies that open files
+with all possible modes
+3. Write a test for each type of special files (devices, directories, the ones
+made of actual paper...)
