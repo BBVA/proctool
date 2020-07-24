@@ -111,8 +111,6 @@ def test_detect_openat(times):
     assert found == times
 
 
-
-@pytest.mark.skip
 @given(
     inputs=st.dictionaries(
         keys=st.text(alphabet=string.ascii_lowercase),
@@ -142,7 +140,7 @@ for filename in DATA['inputs']:
 """)
             os.fchmod(program.fileno(), stat.S_IRWXU)
 
-        exitcode, log = proctool(program_path)
+        _, log = proctool(program_path)
 
         for entry in log:
             try:
@@ -152,8 +150,44 @@ for filename in DATA['inputs']:
                 # Log entry is not per hashed file or hash is not on input_hashes
                 pass
 
-        try:
-            assert len(input_hashes) == 0, str(input_hashes)
-        except:
-            import pdb
-            pdb.set_trace()
+        assert len(input_hashes) == 0, str(input_hashes)
+
+
+@given(
+    outputs=st.dictionaries(
+        keys=st.text(alphabet=string.ascii_lowercase),
+        values=st.binary()))
+def test_capture_outputs_of_a_process(outputs):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_hashes = set()
+        for content in outputs.values():
+            output_hashes.add(hashlib.md5(content).hexdigest())
+
+        program_data = {'outputs': outputs}
+
+        program_path = os.path.join(tmpdir, 'program.py')
+        with open(program_path, 'w') as program:
+            program.write(f"""#!/usr/bin/env python
+import os.path
+
+DATA={repr(program_data)}
+TMPDIR={repr(tmpdir)}
+
+for filename, content in DATA['outputs'].items():
+    with open(os.path.join(TMPDIR, 'output_'+filename), 'wb') as f:
+        f.write(content)
+
+""")
+            os.fchmod(program.fileno(), stat.S_IRWXU)
+
+        _, log = proctool(program_path)
+
+        for entry in log:
+            try:
+                hash = entry['hash']
+                output_hashes.remove(hash)
+            except KeyError:
+                # Log entry is not per hashed file or hash is not on output_hashes
+                pass
+
+        assert len(output_hashes) == 0, str(output_hashes)
