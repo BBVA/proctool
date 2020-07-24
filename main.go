@@ -58,7 +58,9 @@ func main() {
 	//
 	// setupLogger()
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	logger, _ := zap.NewProduction()
+	config := zap.NewProductionConfig()
+	config.Sampling = nil
+	logger, _ := config.Build()
 	defer logger.Sync()
 	zap.ReplaceGlobals(logger)
 
