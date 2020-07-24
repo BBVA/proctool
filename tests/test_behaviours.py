@@ -1,3 +1,5 @@
+# TODO: rename fixture files to express the actual behavior and not the test intent
+
 from datetime import datetime
 import hashlib
 import json
@@ -22,11 +24,7 @@ def proctool(*args):
     exitcode, lines = subprocess.getstatusoutput(" ".join([shlex.quote(c) for c in command]))
     def decode():
         for l in lines.splitlines():
-            try:
-                yield json.loads(l)
-            except:
-                import pdb
-                pdb.set_trace()
+            yield json.loads(l)
 
     return (exitcode, list(decode()))
 
@@ -97,6 +95,23 @@ def test_follow_children_forks(number):
     assert len(surveilled_exit) == number+1
 
 
+@given(st.integers(min_value=0, max_value=255))
+def test_detect_openat(times):
+    fixture = f"{PROJECT}/tests/fixtures/open-self-multiple-times"
+    _, log = proctool(fixture, str(times))
+    
+    found = 0
+    for entry in log:
+        try:
+            if entry["path"] == fixture and entry["hash"] and entry["syscallStopPoint"] == "SYSCALL_STOP_POINT_OPENAT_RETURN":
+                found += 1
+        except KeyError:
+            pass
+
+    assert found == times
+
+
+
 @pytest.mark.skip
 @given(
     inputs=st.dictionaries(
@@ -104,21 +119,20 @@ def test_follow_children_forks(number):
         values=st.binary()))
 def test_capture_inputs_of_a_process(inputs):
     with tempfile.TemporaryDirectory() as tmpdir:
+        input_hashes = set()
         for name, content in inputs.items():
             with open(os.path.join(tmpdir, f"input_{name}"), 'wb') as tmpfile:
                 tmpfile.write(content)
+                input_hashes.add(hashlib.md5(content).hexdigest())
 
-        program_data = pickle.dumps(
-            {'inputs': list(inputs.keys())}
-        )
+        program_data = {'inputs': list(inputs.keys())}
 
         program_path = os.path.join(tmpdir, 'program.py')
         with open(program_path, 'w') as program:
             program.write(f"""#!/usr/bin/env python
 import os.path
-import pickle
 
-DATA=pickle.loads({repr(program_data)})
+DATA={repr(program_data)}
 TMPDIR={repr(tmpdir)}
 
 for filename in DATA['inputs']:
@@ -130,8 +144,6 @@ for filename in DATA['inputs']:
 
         exitcode, log = proctool(program_path)
 
-        input_hashes = set(hashlib.md5(c).hexdigest() for c in inputs.values())
-
         for entry in log:
             try:
                 hash = entry['hash']
@@ -140,4 +152,8 @@ for filename in DATA['inputs']:
                 # Log entry is not per hashed file or hash is not on input_hashes
                 pass
 
-        assert len(input_hashes) == 0, str(input_hashes)
+        try:
+            assert len(input_hashes) == 0, str(input_hashes)
+        except:
+            import pdb
+            pdb.set_trace()

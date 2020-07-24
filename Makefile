@@ -1,7 +1,9 @@
-.PHONY: test
+.PHONY: test clean
 
-test: .python-deps bin/proctool bin/biff
-	pipenv run pytest -vv
+CFLAGS=-static
+
+test: .python-deps bin/proctool bin/biff tests/fixtures/open-self-multiple-times
+	pipenv run pytest -vvs
 
 .python-deps: Pipfile Pipfile.lock
 	pipenv sync
@@ -10,5 +12,8 @@ test: .python-deps bin/proctool bin/biff
 bin/proctool: main.go
 	go build -o bin/proctool main.go
 
-bin/biff:
-	gcc -static -o bin/biff biff.c 
+bin/biff: biff
+	mv biff bin/
+
+clean:
+	rm -f bin/proctool bin/biff tests/fixtures/open-self-multiple-times

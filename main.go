@@ -157,7 +157,8 @@ func decodeSyscallStopPoint(regs syscall.PtraceRegs, isReturning bool) int {
 	// RTFM!
 	if syscall_number := regs.Orig_rax; syscall_number == syscall.SYS_EXECVE && !isReturning {
 		return SYSCALL_STOP_POINT_EXECVE_CALL
-	} else if syscall_number == syscall.SYS_OPENAT && isReturning {
+		// } else if syscall_number == syscall.SYS_OPENAT && isReturning { XXX: handle this, plz!
+	} else if syscall_number == syscall.SYS_OPENAT {
 		return SYSCALL_STOP_POINT_OPENAT_RETURN
 	} else {
 		return SYSCALL_STOP_POINT_UNMONITORED
@@ -234,8 +235,8 @@ func sendContinue(biffPid, traceePid int, stoppedSurveilledPid chan int) {
 func hashFileAndContinue(biffPid, traceePid, fd int, path string, stoppedSurveilledPid chan int) {
 	defer sendContinue(biffPid, traceePid, stoppedSurveilledPid)
 
-	if hash, err := hashFile(fmt.Sprintf("/proc/%d/fd/%d", traceePid, fd)); err != nil {
-		zap.L().Error("Cannot hash file via fd", zap.Int("pid", traceePid), zap.Int("fd", fd), zap.String("path", path), zap.Error(err))
+	if hash, err := hashFile(fmt.Sprintf(path, traceePid, fd)); err != nil {
+		zap.L().Error("Cannot hash file via path", zap.Int("pid", traceePid), zap.Int("fd", fd), zap.String("path", path), zap.Error(err))
 	} else {
 		zap.L().Info("Hashed file", zap.String("path", path), zap.String("hash", hash))
 	}
@@ -444,9 +445,9 @@ func trace() (exitStatus int) {
 								pendingHashes.Add(1)
 								go func() {
 									defer pendingHashes.Done()
-									if hash, err := hashFile(fmt.Sprintf("/proc/%d/fd/%d", traceePid, fd)); err != nil {
+									if hash, err := hashFile(path); err != nil {
 										zap.L().Error(
-											"Cannot hash file via fd",
+											"Cannot hash file via path",
 											zap.Error(err),
 											zap.Int("traceePid", traceePid),
 											zap.Int("traceStep", traceStep),
@@ -529,6 +530,8 @@ func trace() (exitStatus int) {
 						"The process tried to open a file but the kernel returned an error",
 						zap.Int("traceePid", traceePid),
 						zap.Int("traceStep", traceStep),
+						zap.Int("Rax", int(regs.Rax)),
+						zap.Int("Orig_rax", int(regs.Orig_rax)),
 						zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 						zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPENAT_RETURN"),
 					)
