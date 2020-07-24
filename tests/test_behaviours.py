@@ -65,7 +65,6 @@ def test_waits_for_surveilled_event_if_biff_dies_prematurely():
     assert (after - before).seconds >= 3
 
 
-@pytest.mark.skip
 @given(st.integers(min_value=1, max_value=42))
 def test_follow_parent_forks(number):
     """
@@ -79,10 +78,9 @@ def test_follow_parent_forks(number):
         if entry.get('stopCause', None) == 'STOPCAUSE_SURVEILLED_EXIT':
             surveilled_exit.add(entry['traceePid'])
 
-    assert len(surveilled_exit) == number+1 
+    assert len(surveilled_exit) == number+1
 
 
-@pytest.mark.skip
 @given(st.integers(min_value=1, max_value=42))
 def test_follow_children_forks(number):
     """
@@ -96,7 +94,7 @@ def test_follow_children_forks(number):
         if entry.get('stopCause', None) == 'STOPCAUSE_SURVEILLED_EXIT':
             surveilled_exit.add(entry['traceePid'])
 
-    assert len(surveilled_exit) == number+1 
+    assert len(surveilled_exit) == number+1
 
 
 @pytest.mark.skip

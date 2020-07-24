@@ -62,12 +62,7 @@ func main() {
 	defer logger.Sync()
 	zap.ReplaceGlobals(logger)
 
-	if isTracer() {
-		os.Exit(trace())
-	} else {
-		// I am Biff
-		os.Exit(spawnSurveilled())
-	}
+	os.Exit(trace())
 }
 
 func setupLogger() {
@@ -82,39 +77,9 @@ func isTracer() bool {
 	return os.Args[0] != BIFF_PROCESS
 }
 
-// spawnSurveilled spawns the process to be traced
-// and returns the exit code of the spawned command
-// without tainting stdout nor stderr
-func spawnSurveilled() (exitCode int) {
-	proc, err := os.StartProcess(os.Args[1], os.Args[1:], &os.ProcAttr{
-		Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
-		Sys: &syscall.SysProcAttr{
-			Setpgid: true,
-			Pgid:    0, // Use a new pgid to assist the calling process isolate the events of the surveilled
-		},
-	})
-	if err != nil {
-		// TODO: mimic bash -c; to stderr: <error>, and return 127, 126, who knows...
-		// https://tldp.org/LDP/abs/html/exitcodes.html
-		// This is a dark and dense forest.  Prepare for the ride.  For now,
-		exitCode = 127
-		return
-	}
-
-	pstate, err := proc.Wait()
-	if err != nil {
-		log.Printf("proctool: %+v", err)
-		return 1
-	}
-
-	exitCode = pstate.ExitCode()
-	return
-}
-
 func startBiff() (pid, pgid int, err error) {
-	// TODO: Add at least PATH to Env, so that /usr/bin/env interpreter can actually work
 	biff, err := os.StartProcess(
-		os.Args[0],
+		"bin/biff", // NOTE: MVP has a hardcoded path on Biff
 		append([]string{BIFF_PROCESS}, os.Args[1:]...),
 		&os.ProcAttr{
 			Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
@@ -147,27 +112,17 @@ func traceBiff(pid int) error {
 		return err
 	}
 
-	return syscall.PtraceCont(pid, 0)
+	return syscall.PtraceSyscall(pid, 0)
 }
 
-func decodeStopCause(wstatus syscall.WaitStatus, traceePid, biffPid, biffPgid int) (stopCause int) {
+func decodeStopCause(wstatus syscall.WaitStatus, traceePid, biffPid int) (stopCause int) {
 	if traceePid == biffPid {
 		stopCause |= IS_BIFF
-	} else {
-		traceePgid, err := syscall.Getpgid(traceePid)
-		if err != nil {
-			stopCause = STOPCAUSE_IGNORABLE
-			return
-		}
-		if traceePgid == biffPgid {
-			stopCause |= IS_BIFF
-		}
 	}
 
 	if wstatus.Exited() {
 		stopCause |= IS_EXIT
 	} else if wstatus.StopSignal() == syscall.SIGTRAP {
-		// } else if wstatus.StopSignal() == syscall.SIGTRAP && wstatus.TrapCause() == 0 {
 		stopCause |= IS_SYSCALL
 	} else {
 		stopCause |= IS_SIGNAL
@@ -359,13 +314,12 @@ func trace() (exitStatus int) {
 		wstatus := syscall.WaitStatus(0)
 		traceePid, err := syscall.Wait4(-1, &wstatus, syscall.WALL, nil)
 		if err != nil {
-			// TODO: capture no child processes
 			zap.L().Info("There are no more children to wait for", zap.Error(err), zap.Int("traceStep", traceStep))
 			// XXX: This will happend once all children finish
 			return
 		}
 
-		switch stopCause := decodeStopCause(wstatus, traceePid, biffPid, biffPgid); stopCause {
+		switch stopCause := decodeStopCause(wstatus, traceePid, biffPid); stopCause {
 		case STOPCAUSE_BIFF_EXIT:
 			exitStatus = wstatus.ExitStatus()
 			zap.L().Info(
@@ -385,7 +339,7 @@ func trace() (exitStatus int) {
 					zap.Int("traceStep", traceStep),
 					zap.Int("surveilledToBeContinued", surveilledToBeContinued))
 				syscall.PtraceSyscall(surveilledToBeContinued, 0)
-				syscall.PtraceCont(traceePid, 0)
+				syscall.PtraceSyscall(traceePid, 0)
 				// TODO: Capture errors
 			} else {
 				zap.L().Info(
@@ -395,7 +349,7 @@ func trace() (exitStatus int) {
 					zap.Int("traceStep", traceStep),
 					zap.Int("stopSignal", int(wstatus.StopSignal())),
 				)
-				syscall.PtraceCont(traceePid, int(wstatus.StopSignal()))
+				syscall.PtraceSyscall(traceePid, int(wstatus.StopSignal()))
 			}
 		case STOPCAUSE_BIFF_SYSCALL:
 			zap.L().Info(
@@ -404,7 +358,7 @@ func trace() (exitStatus int) {
 				zap.String("stopCause", "STOPCAUSE_BIFF_SYSCALL"),
 				zap.Int("traceStep", traceStep),
 			)
-			syscall.PtraceCont(traceePid, 0)
+			syscall.PtraceSyscall(traceePid, 0)
 
 		case STOPCAUSE_SURVEILLED_EXIT:
 			zap.L().Info("Surveiled process exited", zap.Int("traceePid", traceePid), zap.String("stopCause", "STOPCAUSE_SURVEILLED_EXIT"), zap.Int("traceStep", traceStep))
@@ -587,6 +541,8 @@ func trace() (exitStatus int) {
 					zap.Int("traceStep", traceStep),
 					zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 					zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_UNMONITORED"),
+					zap.Int("Orig_rax", int(regs.Orig_rax)),
+					zap.Int("biffPid", biffPid),
 				)
 				syscall.PtraceSyscall(traceePid, 0)
 			default:
