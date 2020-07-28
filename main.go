@@ -237,7 +237,7 @@ func sendContinue(biffPid, traceePid int, stoppedSurveilledPid chan int) {
 func hashFileAndContinue(biffPid, traceePid, fd int, path string, stoppedSurveilledPid chan int) {
 	defer sendContinue(biffPid, traceePid, stoppedSurveilledPid)
 
-	if hash, err := hashFile(fmt.Sprintf(path, traceePid, fd)); err != nil {
+	if hash, err := hashFile(path); err != nil {
 		zap.L().Error("Cannot hash file via path", zap.Int("pid", traceePid), zap.Int("fd", fd), zap.String("path", path), zap.Error(err))
 	} else {
 		zap.L().Info("Hashed file", zap.String("path", path), zap.String("hash", hash))
