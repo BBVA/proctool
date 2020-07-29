@@ -284,3 +284,136 @@ for filename, next_content in DATA['outputs'].items():
                     pass
 
         assert (len(input_hashes), len(output_hashes)) == (0, 0), f"Input: {input_hashes}\nOutput: {output_hashes}"
+
+
+@st.composite
+def operationlist(draw,
+                  inputfiles=st.dictionaries(
+                      keys=st.text(alphabet=string.ascii_lowercase),
+                      values=st.tuples(st.binary(), st.binary())),
+                  ):
+    files = draw(inputfiles)
+
+    @st.composite
+    def _operations(draw, optype=st.sampled_from(('openfile', 'fork', 'clone'))):
+        op = draw(optype)
+        if op == 'openfile':
+            mode = draw(st.sampled_from(('rb', 'wb', 'wb+', 'rb+')))
+            try:
+                filename, (precontent, postcontent) = files.popitem()
+            except KeyError:
+                return ('nope', {})
+            else:
+                return (op, {'path': filename,
+                             'mode': mode,
+                             'precontent': precontent if 'r' in mode else None,
+                             'postcontent': postcontent if set('+w')&set(mode) else None})
+        else:
+            return (op, draw(st.just({'instructions': draw(st.lists(_operations()))})))
+
+    return draw(st.lists(_operations()))
+
+
+@given(instructions=operationlist())
+def test_capture_inputs_and_outputs_in_a_process_tree(instructions):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_hashes = set()
+        output_hashes = set()
+
+        def create_input_files(ins):
+            for i in ins:
+                op, params = i
+                if op == 'openfile':
+                    precontent, postcontent = params['precontent'], params['postcontent']
+                    if precontent is not None:
+                        input_hashes.add(hashlib.md5(precontent).hexdigest())
+                        with open(os.path.join(tmpdir, 'file_' + params['path']), 'wb+') as f:
+                            f.write(precontent)
+                    if postcontent is not None:
+                        if precontent is not None:
+                            final = bytes(n if n is not None else p for p, n in zip_longest(precontent, postcontent))
+                            output_hashes.add(hashlib.md5(final).hexdigest())
+                        else:
+                            output_hashes.add(hashlib.md5(postcontent).hexdigest())
+                elif op in ('fork', 'clone'):
+                    create_input_files(params['instructions'])
+                else:  # nope
+                    pass
+
+        create_input_files(instructions)
+
+        program = f"""#!/usr/bin/env python
+import os
+import sys
+import threading
+
+DATA={repr(instructions)}
+TMPDIR={repr(tmpdir)}
+current = []
+
+class OPS:
+    @staticmethod
+    def openfile(path, mode, postcontent=None, **_):
+        with open(os.path.join(TMPDIR, 'file_' + path), mode=mode) as fh:
+            if postcontent is not None:
+                fh.write(postcontent)
+
+    @staticmethod
+    def fork(instructions, **_):
+        if os.fork()==0:
+            follow_instructions(instructions)
+            sys.exit(0)
+
+    @staticmethod
+    def clone(instructions, **_):
+        threading.Thread(target=follow_instructions, args=(instructions,), daemon=False).start()
+
+    @staticmethod
+    def nope(**_):
+        pass
+
+def run_instruction(i):
+    global current
+    op, params = i
+    # print(f"Running: {{current}} => {{op}} {{params}}")
+    current[-1] = current[-1] + 1
+    return getattr(OPS, op)(**params)
+
+
+def follow_instructions(instructions):
+    global current
+    current.append(0)
+    for instruction in instructions:
+        run_instruction(instruction)
+
+
+if __name__ == '__main__':
+    follow_instructions(DATA)
+
+"""
+
+        program_path = os.path.join(tmpdir, 'program.py')
+        with open(program_path, 'w+') as f:
+            f.write(program)
+            os.fchmod(f.fileno(), stat.S_IRWXU)
+
+        _, log = proctool(program_path)
+
+        for entry in log:
+            try:
+                hash = entry['hash']
+            except KeyError:
+                # Log entry is not per hashed file or hash is not on input_hashes
+                pass
+            else:
+                try:
+                    # TODO: differentiate in the log file which files are inputs and outputs
+                    input_hashes.remove(hash)
+                except KeyError:
+                    pass
+                try:
+                    output_hashes.remove(hash)
+                except KeyError:
+                    pass
+
+        assert (len(input_hashes), len(output_hashes)) == (0, 0), f"Input: {input_hashes}\nOutput: {output_hashes}"

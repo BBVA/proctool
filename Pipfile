@@ -8,6 +8,7 @@ verify_ssl = true
 [packages]
 hypothesis = "*"
 pytest = "*"
+ipdb = "*"
 
 [requires]
 python_version = "3.8"
