@@ -149,6 +149,8 @@ func decodeStopCause(wstatus syscall.WaitStatus, traceePid, biffPid int) (stopCa
 
 func isAsyncTaskFinishedSignal(biffPgid int, wstatus syscall.WaitStatus) bool {
 	// TODO: check that the sender.Pgid matches biffPgid
+	// XXX: Not sure how to achieve this :-(
+	// See https://stackoverflow.com/questions/30219751/go-get-signal-origin
 	return wstatus.StopSignal() == channelReady
 }
 
