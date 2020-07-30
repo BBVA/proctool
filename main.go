@@ -22,32 +22,31 @@ import (
 const (
 	// http://www.catb.org/jargon/html/B/biff.html
 	// TODO: explain what and why
-	// TODO: rename constants to follow Go's conventions
-	BIFF_PROCESS = "[ProcTool Biff]"
+	biffProcess = "[ProcTool Biff]"
 
-	CHANNEL_READY = syscall.SIGUSR1
+	channelReady = syscall.SIGUSR1
 
-	IS_BIFF = 1 << iota
-	IS_SYSCALL
-	IS_SIGNAL
-	IS_EXIT
+	isBiff = 1 << iota
+	isSyscall
+	isSignal
+	isExit
 
-	STOPCAUSE_IGNORABLE          = 0
-	STOPCAUSE_SURVEILLED_SYSCALL = IS_SYSCALL
-	STOPCAUSE_SURVEILLED_SIGNAL  = IS_SIGNAL
-	STOPCAUSE_SURVEILLED_EXIT    = IS_EXIT
-	STOPCAUSE_BIFF_SYSCALL       = IS_BIFF | IS_SYSCALL
-	STOPCAUSE_BIFF_SIGNAL        = IS_BIFF | IS_SIGNAL
-	STOPCAUSE_BIFF_EXIT          = IS_BIFF | IS_EXIT
+	stopCauseIgnorable         = 0
+	stopCauseSurveilledSyscall = isSyscall
+	stopCauseSurveilledSignal  = isSignal
+	stopCauseSurveilledExit    = isExit
+	stopCauseBiffSyscall       = isBiff | isSyscall
+	stopCauseBiffSignal        = isBiff | isSignal
+	stopCauseBiffExit          = isBiff | isExit
 
-	SYSCALL_STOP_POINT_UNMONITORED = iota
-	SYSCALL_STOP_POINT_OPENAT_RETURN
-	SYSCALL_STOP_POINT_EXECVE_CALL
+	syscallStopPointUnmonitored = iota
+	syscallStopPointOpenatReturn
+	syscallStopPointExecveCall
 
-	MODE_O_RDONLY = iota
-	MODE_O_RDWR
-	MODE_O_WRONLY
-	MODE_O_TRUNC_RDWR
+	O_RDONLY = iota
+	O_RDWR
+	O_WRONLY
+	O_TRUNC_RDWR
 )
 
 func main() {
@@ -74,13 +73,13 @@ func setupLogger() {
 }
 
 func isTracer() bool {
-	return os.Args[0] != BIFF_PROCESS
+	return os.Args[0] != biffProcess
 }
 
 func startBiff() (pid, pgid int, err error) {
 	biff, err := os.StartProcess(
 		"bin/biff", // NOTE: MVP has a hardcoded path on Biff
-		append([]string{BIFF_PROCESS}, os.Args[1:]...),
+		append([]string{biffProcess}, os.Args[1:]...),
 		&os.ProcAttr{
 			Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
 			Sys: &syscall.SysProcAttr{
@@ -117,15 +116,15 @@ func traceBiff(pid int) error {
 
 func decodeStopCause(wstatus syscall.WaitStatus, traceePid, biffPid int) (stopCause int) {
 	if traceePid == biffPid {
-		stopCause |= IS_BIFF
+		stopCause |= isBiff
 	}
 
 	if wstatus.Exited() {
-		stopCause |= IS_EXIT
+		stopCause |= isExit
 	} else if wstatus.StopSignal() == syscall.SIGTRAP {
-		stopCause |= IS_SYSCALL
+		stopCause |= isSyscall
 	} else {
-		stopCause |= IS_SIGNAL
+		stopCause |= isSignal
 	}
 
 	return
@@ -133,7 +132,7 @@ func decodeStopCause(wstatus syscall.WaitStatus, traceePid, biffPid int) (stopCa
 
 func isAsyncTaskFinishedSignal(biffPgid int, wstatus syscall.WaitStatus) bool {
 	// TODO: check that the sender.Pgid matches biffPgid
-	return wstatus.StopSignal() == CHANNEL_READY
+	return wstatus.StopSignal() == channelReady
 }
 
 type safeBool struct {
@@ -156,12 +155,12 @@ func decodeSyscallStopPoint(regs syscall.PtraceRegs, isReturning bool) int {
 	// distinguised by the contents of the registers.
 	// RTFM!
 	if syscall_number := regs.Orig_rax; syscall_number == syscall.SYS_EXECVE && !isReturning {
-		return SYSCALL_STOP_POINT_EXECVE_CALL
+		return syscallStopPointExecveCall
 		// } else if syscall_number == syscall.SYS_OPENAT && isReturning { XXX: handle this, plz!
 	} else if syscall_number == syscall.SYS_OPENAT {
-		return SYSCALL_STOP_POINT_OPENAT_RETURN
+		return syscallStopPointOpenatReturn
 	} else {
-		return SYSCALL_STOP_POINT_UNMONITORED
+		return syscallStopPointUnmonitored
 	}
 }
 
@@ -188,14 +187,14 @@ func isOpenAtOk(regs syscall.PtraceRegs) bool {
 func getOpenAtMode(regs syscall.PtraceRegs) int {
 	if regs.Rdx&syscall.O_RDWR != 0 {
 		if regs.Rdx&syscall.O_TRUNC != 0 {
-			return MODE_O_TRUNC_RDWR
+			return O_TRUNC_RDWR
 		} else {
-			return MODE_O_RDWR
+			return O_RDWR
 		}
 	} else if regs.Rdx&syscall.O_WRONLY != 0 {
-		return MODE_O_WRONLY
+		return O_WRONLY
 	} else { // O_RDONLY
-		return MODE_O_RDONLY
+		return O_RDONLY
 	}
 }
 
@@ -229,7 +228,7 @@ func hashFile(filename string) (string, error) {
 }
 
 func sendContinue(biffPid, traceePid int, stoppedSurveilledPid chan int) {
-	err := syscall.Kill(biffPid, CHANNEL_READY)
+	err := syscall.Kill(biffPid, channelReady)
 	if err != nil {
 		zap.L().Error("Cannot signal biff about available message", zap.Error(err))
 	}
@@ -325,7 +324,7 @@ func trace() (exitStatus int) {
 		}
 
 		switch stopCause := decodeStopCause(wstatus, traceePid, biffPid); stopCause {
-		case STOPCAUSE_BIFF_EXIT:
+		case stopCauseBiffExit:
 			exitStatus = wstatus.ExitStatus()
 			zap.L().Info(
 				"Biff process exited",
@@ -334,7 +333,7 @@ func trace() (exitStatus int) {
 				zap.Int("traceStep", traceStep),
 				zap.Int("exitStatus", exitStatus),
 			)
-		case STOPCAUSE_BIFF_SIGNAL:
+		case stopCauseBiffSignal:
 			if isAsyncTaskFinishedSignal(biffPgid, wstatus) {
 				surveilledToBeContinued := <-stoppedSurveilledPid
 				zap.L().Info(
@@ -356,7 +355,7 @@ func trace() (exitStatus int) {
 				)
 				syscall.PtraceCont(traceePid, int(wstatus.StopSignal()))
 			}
-		case STOPCAUSE_BIFF_SYSCALL:
+		case stopCauseBiffSyscall:
 			zap.L().Info(
 				"Biff process stop calling or returning from syscall",
 				zap.Int("traceePid", traceePid),
@@ -365,7 +364,7 @@ func trace() (exitStatus int) {
 			)
 			syscall.PtraceCont(traceePid, 0)
 
-		case STOPCAUSE_SURVEILLED_EXIT:
+		case stopCauseSurveilledExit:
 			zap.L().Info("Surveiled process exited", zap.Int("traceePid", traceePid), zap.String("stopCause", "STOPCAUSE_SURVEILLED_EXIT"), zap.Int("traceStep", traceStep))
 			// TODO: it's reckoning day! hash any files opened by the deceased,
 			// which might have not percolated via ptrace() because reasons
@@ -374,11 +373,11 @@ func trace() (exitStatus int) {
 			// TODO: this hash should only happen if this process was the last
 			// writer standing (either, O_RDWR, or O_WRONLY)
 
-		case STOPCAUSE_SURVEILLED_SIGNAL:
+		case stopCauseSurveilledSignal:
 			zap.L().Info("Surveiled process received a signal", zap.Int("traceePid", traceePid), zap.String("stopCause", "STOPCAUSE_SURVEILLED_SIGNAL"), zap.Int("traceStep", traceStep))
 			syscall.PtraceSyscall(traceePid, int(wstatus.StopSignal()))
 
-		case STOPCAUSE_SURVEILLED_SYSCALL:
+		case stopCauseSurveilledSyscall:
 			// TODO: encapsulate this in a struct w/ decodeSyscallStopPoint as a method?
 			isReturning := returningFromSyscall[traceePid]
 			returningFromSyscall[traceePid] = !isReturning
@@ -391,7 +390,7 @@ func trace() (exitStatus int) {
 			}
 
 			switch syscallStopPoint := decodeSyscallStopPoint(*regs, isReturning); syscallStopPoint {
-			case SYSCALL_STOP_POINT_EXECVE_CALL:
+			case syscallStopPointExecveCall:
 				path, err := getExecvePath(traceePid, *regs)
 				if err != nil {
 					zap.L().Error(
@@ -415,7 +414,7 @@ func trace() (exitStatus int) {
 						hashExecAndContinue(biffPid, traceePid, path, stoppedSurveilledPid) // process continuation will be handled by STOPCAUSE_BIFF_SIGNAL > isAsyncTaskFinishedSignal()
 					}()
 				}
-			case SYSCALL_STOP_POINT_OPENAT_RETURN:
+			case syscallStopPointOpenatReturn:
 				if isOpenAtOk(*regs) {
 					path, err := getOpenAtPath(traceePid, *regs)
 					if err != nil {
@@ -430,7 +429,7 @@ func trace() (exitStatus int) {
 					} else {
 						fd := getOpenAtFd(*regs)
 						switch mode := getOpenAtMode(*regs); mode {
-						case MODE_O_RDONLY:
+						case O_RDONLY:
 							zap.L().Info(
 								"Surveilled is about to open a file in RDONLY mode.  Hashing in background and allowing it to continue.",
 								zap.Int("traceePid", traceePid),
@@ -488,7 +487,7 @@ func trace() (exitStatus int) {
 										zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPENAT_RETURN"))
 								}
 							}()
-						case MODE_O_RDWR:
+						case O_RDWR:
 							zap.L().Info(
 								"Surveilled is about to open a file in RDWR mode.  Stopping it until the hash is done.",
 								zap.Int("traceePid", traceePid),
@@ -507,7 +506,7 @@ func trace() (exitStatus int) {
 								defer flag.SetAndUnlock(true)
 								hashFileAndContinue(biffPid, traceePid, fd, path, stoppedSurveilledPid) // process continuation will be handled by STOPCAUSE_BIFF_SIGNAL > isAsyncTaskFinishedSignal()
 							}()
-						case MODE_O_WRONLY, MODE_O_TRUNC_RDWR: // Nota del Ruso: sólo importan las lecturas; WR al cierre (0x1623498761923487162938764912837649128374691)
+						case O_WRONLY, O_TRUNC_RDWR: // Nota del Ruso: sólo importan las lecturas; WR al cierre (0x1623498761923487162938764912837649128374691)
 							zap.L().Info(
 								"Surveilled is about to open a file in WRONLY mode.  We will mark this file as modified; it will be hashed when another process tries to open it for reading or when everyone dies.",
 								zap.Int("traceePid", traceePid),
@@ -541,7 +540,7 @@ func trace() (exitStatus int) {
 					)
 					syscall.PtraceSyscall(traceePid, 0)
 				}
-			case SYSCALL_STOP_POINT_UNMONITORED:
+			case syscallStopPointUnmonitored:
 				zap.L().Info(
 					"Analyzing SYSCALL_STOP_POINT_UNMONITORED",
 					zap.Int("traceePid", traceePid),
@@ -562,7 +561,7 @@ func trace() (exitStatus int) {
 				)
 			}
 
-		case STOPCAUSE_IGNORABLE:
+		case stopCauseIgnorable:
 			zap.L().Error(
 				"Attending STOPCAUSE_IGNORABLE.  Cannot get tracee PGID",
 				zap.Int("traceePid", traceePid),
