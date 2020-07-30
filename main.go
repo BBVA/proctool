@@ -20,8 +20,25 @@ import (
 )
 
 const (
-	// http://www.catb.org/jargon/html/B/biff.html
-	// TODO: explain what and why
+	// Biff, named after the classic UNIX® Biff email notification program¹
+	// is a small helper program that is used as a way for proctool's
+	// goroutines to send messages to proctool's main goroutine/thread,
+	// which is usually blocked Wait4()ing for Ptrace events, and thus would
+	// not be able to read from a channel as is standard practice.
+
+	// proctool spawns a ptraced biff, which in turn spawns the process
+	// specified to proctool via Argv. When proctool goroutines want to
+	// signal the main goroutine, they simply send a UNIX® signal to biff,
+	// which is ptraced by proctool, and thus proctool main goroutine will
+	// awaken from the Wait4(), determine that the reason of the awakening
+	// is biff being signaled, and read a message from a preordained
+	// channel.
+
+	// Note that this implementation is an act of desperation upon facing
+	// the tricky interface provided by ptrace(). Without biff, we were
+	// unable to employ goroutines effectively.
+
+	// [1]: http://www.catb.org/jargon/html/B/biff.html
 	biffProcess = "[ProcTool Biff]"
 
 	channelReady = syscall.SIGUSR1
