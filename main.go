@@ -5,9 +5,6 @@ package main
 // Otherwise, the descendants surviving the parent surveilled process won't be
 // monitored after the fact.
 
-// FIXME: No grandsons of the parent surveilled process are monitored
-// FIXME: Some of the parent surveilled process go undetected, apparently
-
 import (
 	"C"
 	"crypto/md5"
