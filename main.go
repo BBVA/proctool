@@ -83,7 +83,6 @@ func main() {
 
 func setupLogger() {
 	// TODO: check the environment for var: TBD that signifies where to send the output (path to file)
-	// TODO: config log to produce line numbers upon log.Print*
 	// TODO: we need a logger for the special occasions (when surveilled cannot be
 	// spawned, or traced, or whatever).   When abort is the only way forward.
 	// We'll dump info to stderr, then.
