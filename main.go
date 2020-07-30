@@ -1,12 +1,13 @@
-package main
-
 // CAVEAT EMPTOR: The current design assumes that the surveilled process spawned by
 // BIFF will wait for each and every descendant to die before dying himself.
 // Otherwise, the descendants surviving the parent surveilled process won't be
 // monitored after the fact.
 
+package main
+
+import "C"
+
 import (
-	"C"
 	"crypto/md5"
 	"fmt"
 	"io"
