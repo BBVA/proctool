@@ -3,6 +3,10 @@
 // Otherwise, the descendants surviving the parent surveilled process won't be
 // monitored after the fact.
 
+// TODO: Log argv of the execve-ees
+// TODO: Log the case of each hashed file (input, output,  or inputoutput)
+// TODO: Don't try to hash  special files, log event instead
+
 package main
 
 import "C"
