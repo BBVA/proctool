@@ -3,3 +3,5 @@
 bin/*
 .pytest_cache
 tests/fixtures/open-self-multiple-times
+biff.go
+biff

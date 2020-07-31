@@ -18,6 +18,7 @@ import (
 	"syscall"
 
 	"go.uber.org/zap" // https://github.com/uber-go/zap
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -94,8 +95,17 @@ func isTracer() bool {
 }
 
 func startBiff() (pid, pgid int, err error) {
+	fd, err := unix.MemfdCreate("biff", unix.MFD_CLOEXEC)
+	if err != nil {
+		return
+	}
+	_, err = unix.Write(fd, BiffBlob)
+	if err != nil {
+		return
+	}
+
 	biff, err := os.StartProcess(
-		"bin/biff", // NOTE: MVP has a hardcoded path on Biff
+		fmt.Sprintf("/proc/self/fd/%d", fd),
 		append([]string{biffProcess}, os.Args[1:]...),
 		&os.ProcAttr{
 			Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
