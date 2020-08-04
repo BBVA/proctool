@@ -19,6 +19,6 @@ int main(int argc, char *argv[]) {
     }
 
     for (int i=0; i<times; i++) {
-        close(open(path, O_RDONLY));
+        close(openat(AT_FDCWD, path, O_RDONLY));
     }
 }
