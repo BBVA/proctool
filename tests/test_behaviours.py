@@ -12,6 +12,7 @@ import string
 import subprocess
 import tempfile
 
+import hypothesis
 from hypothesis import given
 from hypothesis import strategies as st
 import pytest
@@ -315,6 +316,10 @@ def operationlist(draw,
 
 
 @given(instructions=operationlist())
+@hypothesis.settings(
+    deadline=None,
+    suppress_health_check=hypothesis.HealthCheck.all()
+)
 def test_capture_inputs_and_outputs_in_a_process_tree(instructions):
     with tempfile.TemporaryDirectory() as tmpdir:
         input_hashes = set()
@@ -401,6 +406,7 @@ if __name__ == '__main__':
 
         for entry in log:
             try:
+
                 hash = entry['hash']
             except KeyError:
                 # Log entry is not per hashed file or hash is not on input_hashes
