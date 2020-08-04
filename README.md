@@ -8,5 +8,5 @@ Testing
 -------
 
 ```bash
-nix-shell --command make test
+nix-shell --command "make test"
 ```
