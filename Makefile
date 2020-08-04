@@ -1,16 +1,13 @@
 .PHONY: test clean
 
 CFLAGS=-static
+CC=musl-gcc
 
-test: .python-deps bin/proctool tests/fixtures/open-self-multiple-times
-	pipenv run pytest -vvs
-
-.python-deps: Pipfile Pipfile.lock
-	pipenv sync
-	touch .python-deps
+test: bin/proctool tests/fixtures/open-self-multiple-times
+	pytest -vvs
 
 bin/proctool: main.go biff.go
-	go build -o bin/proctool
+	go build -o bin/proctool -ldflags="-linkmode external -extldflags=-static"
 
 biff.go: src/biff blob2go.py
 	python blob2go.py src/biff > biff.go
