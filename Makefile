@@ -14,3 +14,6 @@ biff.go: src/biff blob2go.py
 
 clean:
 	rm -f bin/proctool src/biff biff.go tests/fixtures/open-self-multiple-times
+
+install: bin/proctool
+	sudo install bin/proctool /usr/local/bin
