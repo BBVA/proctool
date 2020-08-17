@@ -13,6 +13,7 @@ import "C"
 
 import (
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -246,6 +247,14 @@ func readString(pid int, addr uintptr) (string, error) {
 }
 
 func hashFile(filename string) (string, error) {
+	fi, err := os.Stat(filename)
+	if err != nil {
+		return "", err
+	}
+	if !fi.Mode().IsRegular() {
+		return "", errors.New("Not a regular file")
+	}
+
 	f, err := os.Open(filename)
 	if err != nil {
 		return "", err
@@ -333,6 +342,7 @@ func trace() (exitStatus int) {
 					zap.L().Error(
 						"A pending hash cannot be performed.  Maybe the file was deleted?",
 						zap.String("path", path),
+						zap.Error(err),
 						zap.Bool("wasModified", wasModified.Value),
 					)
 				} else {
