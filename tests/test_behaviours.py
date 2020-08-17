@@ -1,12 +1,14 @@
 # TODO: rename fixture files to express the actual behavior and not the test intent
 
 from datetime import datetime
-from itertools import zip_longest
+from datetime import timedelta
+from itertools import zip_longest, count
 import hashlib
 import json
 import os
 import pickle
 import shlex
+import signal
 import stat
 import string
 import subprocess
@@ -56,8 +58,7 @@ def test_honor_child_last_wish():
     assert exitcode == 42
 
 
-
-@pytest.mark.skip("This cannot be achieved with the current design")
+@pytest.mark.xfail(reason="This cannot be achieved with the current design")
 def test_waits_for_surveilled_event_if_biff_dies_prematurely():
     before = datetime.now()
     proctool("/bin/sh", "-c", "/bin/sleep 3 & disown")
@@ -101,7 +102,7 @@ def test_follow_children_forks(number):
 def test_detect_openat(times):
     fixture = f"{PROJECT}/tests/fixtures/open-self-multiple-times"
     _, log = proctool(fixture, str(times))
-    
+
     found = 0
     for entry in log:
         try:
@@ -287,38 +288,33 @@ for filename, next_content in DATA['outputs'].items():
         assert (len(input_hashes), len(output_hashes)) == (0, 0), f"Input: {input_hashes}\nOutput: {output_hashes}"
 
 
+
 @st.composite
-def operationlist(draw,
-                  inputfiles=st.dictionaries(
-                      keys=st.text(alphabet=string.ascii_lowercase),
-                      values=st.tuples(st.binary(), st.binary())),
-                  ):
-    files = draw(inputfiles)
+def openfile(draw,
+              mode=st.sampled_from(('rb', 'wb', 'wb+', 'rb+')),
+              precontent=st.binary(),
+              postcontent=st.binary()):
+    mode_ = draw(mode)
+    return ('openfile',
+            {'path': str(draw(st.uuids())),
+             'mode': mode_,
+             'precontent': draw(precontent) if 'r' in mode_ else None,
+             'postcontent': draw(postcontent) if set('+w')&set(mode_) else None})
 
-    @st.composite
-    def _operations(draw, optype=st.sampled_from(('openfile', 'fork', 'clone'))):
-        op = draw(optype)
-        if op == 'openfile':
-            mode = draw(st.sampled_from(('rb', 'wb', 'wb+', 'rb+')))
-            try:
-                filename, (precontent, postcontent) = files.popitem()
-            except KeyError:
-                return ('nope', {})
-            else:
-                return (op, {'path': filename,
-                             'mode': mode,
-                             'precontent': precontent if 'r' in mode else None,
-                             'postcontent': postcontent if set('+w')&set(mode) else None})
-        else:
-            return (op, draw(st.just({'instructions': draw(st.lists(_operations()))})))
-
-    return draw(st.lists(_operations()))
+program = st.lists
+fork = lambda p: st.tuples(st.just('fork'), st.fixed_dictionaries({'instructions': program(p)}))
+clone = lambda p: st.tuples(st.just('clone'), st.fixed_dictionaries({'instructions': program(p)}))
+operations=lambda: st.recursive(openfile(), lambda p: st.one_of(fork(p), clone(p)))
 
 
-@given(instructions=operationlist())
+def timeout(signum, frame):
+    raise TimeoutError("test took too long")
+
+@pytest.mark.wip
+@given(instructions=st.lists(operations()))
 @hypothesis.settings(
-    deadline=None,
-    suppress_health_check=hypothesis.HealthCheck.all()
+    deadline=timedelta(seconds=10),
+    # suppress_health_check=hypothesis.HealthCheck.all()
 )
 def test_capture_inputs_and_outputs_in_a_process_tree(instructions):
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -347,7 +343,7 @@ def test_capture_inputs_and_outputs_in_a_process_tree(instructions):
 
         create_input_files(instructions)
 
-        program = f"""#!/usr/bin/env python
+        program = f"""#!/usr/bin/python
 import os
 import sys
 import threading
@@ -365,13 +361,18 @@ class OPS:
 
     @staticmethod
     def fork(instructions, **_):
-        if os.fork()==0:
+        pid = os.fork()
+        if pid == 0:
             follow_instructions(instructions)
             sys.exit(0)
+        else:
+            os.waitpid(pid, 0)
 
     @staticmethod
     def clone(instructions, **_):
-        threading.Thread(target=follow_instructions, args=(instructions,), daemon=False).start()
+        t=threading.Thread(target=follow_instructions, args=(instructions,), daemon=False)
+        t.start()
+        t.join()
 
     @staticmethod
     def nope(**_):
@@ -402,6 +403,8 @@ if __name__ == '__main__':
             f.write(program)
             os.fchmod(f.fileno(), stat.S_IRWXU)
 
+        signal.signal(signal.SIGALRM, timeout)
+        signal.alarm(10)
         _, log = proctool(program_path)
 
         for entry in log:
