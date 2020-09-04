@@ -3,7 +3,7 @@
 CFLAGS=-static
 CC=musl-gcc
 
-test: bin/proctool tests/fixtures/open-self-multiple-times
+test: bin/proctool tests/fixtures/open-self-multiple-times tests/fixtures/openat-self-multiple-times
 	pytest -vvs
 
 bin/proctool: main.go biff.go

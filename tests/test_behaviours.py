@@ -100,13 +100,29 @@ def test_follow_children_forks(number):
 
 @given(st.integers(min_value=0, max_value=255))
 def test_detect_openat(times):
-    fixture = f"{PROJECT}/tests/fixtures/open-self-multiple-times"
+    fixture = f"{PROJECT}/tests/fixtures/openat-self-multiple-times"
     _, log = proctool(fixture, str(times))
 
     found = 0
     for entry in log:
         try:
             if entry["path"] == fixture and entry["hash"] and entry["syscallStopPoint"] == "SYSCALL_STOP_POINT_OPENAT_RETURN":
+                found += 1
+        except KeyError:
+            pass
+
+    assert found == times
+
+
+@given(st.integers(min_value=0, max_value=255))
+def test_detect_open(times):
+    fixture = f"{PROJECT}/tests/fixtures/open-self-multiple-times"
+    _, log = proctool(fixture, str(times))
+
+    found = 0
+    for entry in log:
+        try:
+            if entry["path"] == fixture and entry["hash"] and entry["syscallStopPoint"] == "SYSCALL_STOP_POINT_OPEN_RETURN":
                 found += 1
         except KeyError:
             pass

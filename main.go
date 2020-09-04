@@ -65,6 +65,7 @@ const (
 
 	syscallStopPointUnmonitored = iota
 	syscallStopPointOpenatReturn
+	syscallStopPointOpenReturn
 	syscallStopPointExecveCall
 
 	O_RDONLY = iota
@@ -193,9 +194,19 @@ func decodeSyscallStopPoint(regs syscall.PtraceRegs, isReturning bool) int {
 		// } else if syscall_number == syscall.SYS_OPENAT && isReturning { XXX: handle this, plz!
 	} else if syscall_number == syscall.SYS_OPENAT {
 		return syscallStopPointOpenatReturn
+	} else if syscall_number == syscall.SYS_OPEN {
+		return syscallStopPointOpenReturn
 	} else {
 		return syscallStopPointUnmonitored
 	}
+}
+
+func getOpenPath(pid int, regs syscall.PtraceRegs) (string, error) {
+	path, err := readString(pid, uintptr(regs.Rdi))
+	if err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func getOpenAtPath(pid int, regs syscall.PtraceRegs) (string, error) {
@@ -226,6 +237,20 @@ func getOpenAtMode(regs syscall.PtraceRegs) int {
 			return O_RDWR
 		}
 	} else if regs.Rdx&syscall.O_WRONLY != 0 {
+		return O_WRONLY
+	} else { // O_RDONLY
+		return O_RDONLY
+	}
+}
+
+func getOpenMode(regs syscall.PtraceRegs) int {
+	if regs.Rsi&syscall.O_RDWR != 0 {
+		if regs.Rsi&syscall.O_TRUNC != 0 {
+			return O_TRUNC_RDWR
+		} else {
+			return O_RDWR
+		}
+	} else if regs.Rsi&syscall.O_WRONLY != 0 {
 		return O_WRONLY
 	} else { // O_RDONLY
 		return O_RDONLY
@@ -449,6 +474,7 @@ func trace() (exitStatus int) {
 						"A execve() was intercepted and the pointed path found.  Hashing file before allowing the process to continue",
 						zap.Int("traceePid", traceePid),
 						zap.Int("traceStep", traceStep),
+						zap.String("path", path),
 						zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 						zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_EXECVE_CALL"))
 					pendingHashes.Add(1)
@@ -471,7 +497,8 @@ func trace() (exitStatus int) {
 						syscall.PtraceSyscall(traceePid, 0)
 					} else {
 						fd := getOpenAtFd(*regs)
-						switch mode := getOpenAtMode(*regs); mode {
+						mode := getOpenAtMode(*regs)
+						switch mode {
 						case O_RDONLY:
 							zap.L().Info(
 								"Surveilled is about to open a file in RDONLY mode.  Hashing in background and allowing it to continue.",
@@ -580,6 +607,133 @@ func trace() (exitStatus int) {
 						zap.Int("Orig_rax", int(regs.Orig_rax)),
 						zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 						zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPENAT_RETURN"),
+					)
+					syscall.PtraceSyscall(traceePid, 0)
+				}
+			case syscallStopPointOpenReturn:
+				if isOpenAtOk(*regs) {
+					path, err := getOpenPath(traceePid, *regs)
+					if err != nil {
+						zap.L().Error(
+							"Kernel reported that the file was open correctly but we can't read the path string",
+							zap.Error(err),
+							zap.Int("traceePid", traceePid),
+							zap.Int("traceStep", traceStep),
+							zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPEN_RETURN"),
+							zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"))
+						syscall.PtraceSyscall(traceePid, 0)
+					} else {
+						fd := getOpenAtFd(*regs)
+						mode := getOpenMode(*regs)
+						switch mode {
+						case O_RDONLY:
+							zap.L().Info(
+								"Surveilled is about to open a file in RDONLY mode.  Hashing in background and allowing it to continue.",
+								zap.Int("traceePid", traceePid),
+								zap.Int("traceStep", traceStep),
+								zap.Int("fd", fd),
+								zap.String("path", path),
+								zap.Int("mode", mode),
+								zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
+								zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPEN_RETURN"))
+							// Dead or alive, you're coming with me
+							func() {
+								tmp, _ := alteredFiles.LoadOrStore(path, &safeBool{})
+								flag := tmp.(*safeBool)
+								flag.Lock()
+								defer flag.SetAndUnlock(false)
+								pendingHashes.Add(1)
+								go func() {
+									defer pendingHashes.Done()
+									if hash, err := hashFile(path); err != nil {
+										zap.L().Error(
+											"Cannot hash file via path",
+											zap.Error(err),
+											zap.Int("traceePid", traceePid),
+											zap.Int("traceStep", traceStep),
+											zap.String("path", path),
+											zap.Int("mode", mode),
+											zap.Int("fd", fd),
+											zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
+											zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPEN_RETURN"))
+									} else {
+										zap.L().Info(
+											"Successful file hash",
+											zap.String("path", path),
+											zap.String("hash", hash),
+											zap.Int("mode", mode),
+											zap.Int("traceePid", traceePid),
+											zap.Int("traceStep", traceStep),
+											zap.Int("fd", fd),
+											zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
+											zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPEN_RETURN"))
+									}
+									return
+								}()
+								err := syscall.PtraceSyscall(traceePid, 0)
+								if err != nil {
+									zap.L().Error(
+										"Error allowing surveiled to continue after stopping it in an openat call.  Maybe the process was killed?",
+										zap.Error(err),
+										zap.Int("traceePid", traceePid),
+										zap.Int("traceStep", traceStep),
+										zap.String("path", path),
+										zap.Int("mode", mode),
+										zap.Int("fd", fd),
+										zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
+										zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPEN_RETURN"))
+								}
+							}()
+						case O_RDWR:
+							zap.L().Info(
+								"Surveilled is about to open a file in RDWR mode.  Stopping it until the hash is done.",
+								zap.Int("traceePid", traceePid),
+								zap.Int("traceStep", traceStep),
+								zap.Int("fd", fd),
+								zap.String("path", path),
+								zap.Int("mode", mode),
+								zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
+								zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPEN_RETURN"))
+							pendingHashes.Add(1)
+							go func() {
+								defer pendingHashes.Done()
+								tmp, _ := alteredFiles.LoadOrStore(path, &safeBool{})
+								flag := tmp.(*safeBool)
+								flag.Lock()
+								defer flag.SetAndUnlock(true)
+								hashFileAndContinue(biffPid, traceePid, fd, path, stoppedSurveilledPid) // process continuation will be handled by STOPCAUSE_BIFF_SIGNAL > isAsyncTaskFinishedSignal()
+							}()
+						case O_WRONLY, O_TRUNC_RDWR: // Nota del Ruso: sólo importan las lecturas; WR al cierre (0x1623498761923487162938764912837649128374691)
+							zap.L().Info(
+								"Surveilled is about to open a file in WRONLY mode.  We will mark this file as modified; it will be hashed when another process tries to open it for reading or when everyone dies.",
+								zap.Int("traceePid", traceePid),
+								zap.Int("traceStep", traceStep),
+								zap.Int("fd", fd),
+								zap.String("path", path),
+								zap.Int("mode", mode),
+								zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
+								zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPEN_RETURN"))
+							func() {
+								tmp, _ := alteredFiles.LoadOrStore(path, &safeBool{})
+								flag := tmp.(*safeBool)
+								flag.Lock()
+								defer flag.SetAndUnlock(true)
+								err := syscall.PtraceSyscall(traceePid, 0)
+								if err != nil {
+									// TODO: log process is dead
+								}
+							}()
+						}
+					}
+				} else {
+					zap.L().Info(
+						"The process tried to open a file but the kernel returned an error",
+						zap.Int("traceePid", traceePid),
+						zap.Int("traceStep", traceStep),
+						zap.Int("Rax", int(regs.Rax)),
+						zap.Int("Orig_rax", int(regs.Orig_rax)),
+						zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
+						zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPEN_RETURN"),
 					)
 					syscall.PtraceSyscall(traceePid, 0)
 				}
