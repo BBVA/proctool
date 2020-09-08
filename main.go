@@ -64,6 +64,7 @@ const (
 	stopCauseBiffExit          = isBiff | isExit
 
 	syscallStopPointUnmonitored = iota
+	syscallStopPointCloneReturn
 	syscallStopPointOpenatReturn
 	syscallStopPointOpenReturn
 	syscallStopPointExecveCall
@@ -192,6 +193,8 @@ func decodeSyscallStopPoint(regs syscall.PtraceRegs, isReturning bool) int {
 	if syscall_number := regs.Orig_rax; syscall_number == syscall.SYS_EXECVE && !isReturning {
 		return syscallStopPointExecveCall
 		// } else if syscall_number == syscall.SYS_OPENAT && isReturning { XXX: handle this, plz!
+	} else if syscall_number == syscall.SYS_CLONE || syscall_number == syscall.SYS_FORK || syscall_number == syscall.SYS_VFORK {
+		return syscallStopPointCloneReturn
 	} else if syscall_number == syscall.SYS_OPENAT {
 		return syscallStopPointOpenatReturn
 	} else if syscall_number == syscall.SYS_OPEN {
@@ -227,6 +230,10 @@ func getExecvePath(pid int, regs syscall.PtraceRegs) (string, error) {
 
 func isOpenAtOk(regs syscall.PtraceRegs) bool {
 	return int64(regs.Rax) > -1
+}
+
+func getClonePid(regs syscall.PtraceRegs) int {
+	return int(regs.Rax)
 }
 
 func getOpenAtMode(regs syscall.PtraceRegs) int {
@@ -483,6 +490,18 @@ func trace() (exitStatus int) {
 						hashExecAndContinue(biffPid, traceePid, path, stoppedSurveilledPid) // process continuation will be handled by STOPCAUSE_BIFF_SIGNAL > isAsyncTaskFinishedSignal()
 					}()
 				}
+			case syscallStopPointCloneReturn:
+				childPid := getClonePid(*regs)
+				if childPid > 0 {
+					zap.L().Info(
+						"A clone call just returned",
+						zap.Int("traceePid", traceePid),
+						zap.Int("traceStep", traceStep),
+						zap.Int("childPid", childPid),
+						zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
+						zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_CLONE_CALL"))
+				}
+				syscall.PtraceSyscall(traceePid, 0)
 			case syscallStopPointOpenatReturn:
 				if isOpenAtOk(*regs) {
 					path, err := getOpenAtPath(traceePid, *regs)
@@ -506,7 +525,7 @@ func trace() (exitStatus int) {
 								zap.Int("traceStep", traceStep),
 								zap.Int("fd", fd),
 								zap.String("path", path),
-								zap.Int("mode", mode),
+								zap.String("mode", "O_RDONLY"),
 								zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 								zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPENAT_RETURN"))
 							// Dead or alive, you're coming with me
@@ -525,7 +544,7 @@ func trace() (exitStatus int) {
 											zap.Int("traceePid", traceePid),
 											zap.Int("traceStep", traceStep),
 											zap.String("path", path),
-											zap.Int("mode", mode),
+											zap.String("mode", "O_RDONLY"),
 											zap.Int("fd", fd),
 											zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 											zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPENAT_RETURN"))
@@ -534,7 +553,7 @@ func trace() (exitStatus int) {
 											"Successful file hash",
 											zap.String("path", path),
 											zap.String("hash", hash),
-											zap.Int("mode", mode),
+											zap.String("mode", "O_RDONLY"),
 											zap.Int("traceePid", traceePid),
 											zap.Int("traceStep", traceStep),
 											zap.Int("fd", fd),
@@ -551,7 +570,7 @@ func trace() (exitStatus int) {
 										zap.Int("traceePid", traceePid),
 										zap.Int("traceStep", traceStep),
 										zap.String("path", path),
-										zap.Int("mode", mode),
+										zap.String("mode", "O_RDONLY"),
 										zap.Int("fd", fd),
 										zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 										zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPENAT_RETURN"))
@@ -564,7 +583,7 @@ func trace() (exitStatus int) {
 								zap.Int("traceStep", traceStep),
 								zap.Int("fd", fd),
 								zap.String("path", path),
-								zap.Int("mode", mode),
+								zap.String("mode", "O_RDWR"),
 								zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 								zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPENAT_RETURN"))
 							pendingHashes.Add(1)
@@ -583,7 +602,7 @@ func trace() (exitStatus int) {
 								zap.Int("traceStep", traceStep),
 								zap.Int("fd", fd),
 								zap.String("path", path),
-								zap.Int("mode", mode),
+								zap.String("mode", "O_RDWR"),
 								zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 								zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPENAT_RETURN"))
 							func() {
@@ -633,7 +652,7 @@ func trace() (exitStatus int) {
 								zap.Int("traceStep", traceStep),
 								zap.Int("fd", fd),
 								zap.String("path", path),
-								zap.Int("mode", mode),
+								zap.String("mode", "O_RDONLY"),
 								zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 								zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPEN_RETURN"))
 							// Dead or alive, you're coming with me
@@ -652,7 +671,7 @@ func trace() (exitStatus int) {
 											zap.Int("traceePid", traceePid),
 											zap.Int("traceStep", traceStep),
 											zap.String("path", path),
-											zap.Int("mode", mode),
+											zap.String("mode", "O_RDONLY"),
 											zap.Int("fd", fd),
 											zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 											zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPEN_RETURN"))
@@ -661,7 +680,7 @@ func trace() (exitStatus int) {
 											"Successful file hash",
 											zap.String("path", path),
 											zap.String("hash", hash),
-											zap.Int("mode", mode),
+											zap.String("mode", "O_RDONLY"),
 											zap.Int("traceePid", traceePid),
 											zap.Int("traceStep", traceStep),
 											zap.Int("fd", fd),
@@ -678,7 +697,7 @@ func trace() (exitStatus int) {
 										zap.Int("traceePid", traceePid),
 										zap.Int("traceStep", traceStep),
 										zap.String("path", path),
-										zap.Int("mode", mode),
+										zap.String("mode", "O_RDONLY"),
 										zap.Int("fd", fd),
 										zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 										zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPEN_RETURN"))
@@ -691,7 +710,7 @@ func trace() (exitStatus int) {
 								zap.Int("traceStep", traceStep),
 								zap.Int("fd", fd),
 								zap.String("path", path),
-								zap.Int("mode", mode),
+								zap.String("mode", "O_RDWR"),
 								zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 								zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPEN_RETURN"))
 							pendingHashes.Add(1)
@@ -710,7 +729,7 @@ func trace() (exitStatus int) {
 								zap.Int("traceStep", traceStep),
 								zap.Int("fd", fd),
 								zap.String("path", path),
-								zap.Int("mode", mode),
+								zap.String("mode", "O_WRONLY"),
 								zap.String("stopCause", "STOPCAUSE_SURVEILLED_SYSCALL"),
 								zap.String("syscallStopPoint", "SYSCALL_STOP_POINT_OPEN_RETURN"))
 							func() {

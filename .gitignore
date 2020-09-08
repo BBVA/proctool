@@ -6,3 +6,4 @@ tests/fixtures/open-self-multiple-times
 tests/__pycache__
 biff.go
 biff
+tests/fixtures/openat-self-multiple-times
