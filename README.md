@@ -3,6 +3,8 @@ ProcTool
 
 `proctool` is a proof-of-concept tool implementing "Artifact Tracing via I/O Monitoring".
 
+To know more about it [check out the presentation](./ProcTool_Artifact_Tracing_via_Process_IO_Monitoring.pptx) and [the demo](demo/).
+
 Prerequisites
 -------------
 
